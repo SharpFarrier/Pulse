@@ -1,28 +1,31 @@
 import { supabaseAdmin } from "@/lib/reports/supabaseStore";
-import UploadClient, { type RecentUpload } from "./upload-client";
+import PreviewClient from "./preview-client";
+import type { CampaignDailyRow } from "@/lib/reports/preview";
 
 export const dynamic = "force-dynamic";
 
-async function getRecentUploads(): Promise<RecentUpload[]> {
+async function getCampaignRows(): Promise<CampaignDailyRow[]> {
   try {
     const db = supabaseAdmin();
-    const { data, error } = await db
-      .from("pulse_uploads")
-      .select("uploaded_at, report_types, date_range_start, date_range_end, row_count")
-      .order("uploaded_at", { ascending: false })
-      .limit(8);
-    if (error || !data) return [];
-    return data as RecentUpload[];
+    const all: CampaignDailyRow[] = [];
+    const size = 1000;
+    for (let from = 0; ; from += size) {
+      const { data, error } = await db
+        .from("pulse_campaign_daily")
+        .select("date, campaign_name, impressions, clicks, spend, sales, orders")
+        .order("date", { ascending: true })
+        .range(from, from + size - 1);
+      if (error || !data || data.length === 0) break;
+      all.push(...(data as CampaignDailyRow[]));
+      if (data.length < size) break;
+    }
+    return all;
   } catch {
-    return []; // env not configured yet — page still renders
+    return [];
   }
 }
 
 export default async function Home() {
-  const recent = await getRecentUploads();
-  return (
-    <main style={{ maxWidth: 860, margin: "0 auto", padding: "2.5rem 1.25rem 4rem" }}>
-      <UploadClient recent={recent} />
-    </main>
-  );
+  const rows = await getCampaignRows();
+  return <PreviewClient rows={rows} />;
 }
