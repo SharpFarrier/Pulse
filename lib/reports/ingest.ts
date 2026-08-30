@@ -15,7 +15,7 @@ export const TABLE: Record<ReportType, string> = {
 export const COLUMNS: Record<string, string[]> = {
   pulse_campaign_daily: ["date", "campaign_name", "portfolio", "ad_type", "state", "budget", "impressions", "clicks", "spend", "sales", "orders", "units"],
   pulse_target_daily: ["date", "campaign_name", "ad_group", "target", "match_type", "impressions", "clicks", "spend", "sales", "orders", "bid", "suggested_bid"],
-  pulse_search_term_daily: ["date", "campaign_name", "ad_group", "search_term", "match_type", "impressions", "clicks", "spend", "sales", "orders"],
+  pulse_search_term_daily: ["date", "campaign_name", "ad_group", "search_term", "target", "match_type", "impressions", "clicks", "spend", "sales", "orders"],
   pulse_product_daily: ["date", "campaign_name", "ad_group", "asin", "sku", "impressions", "clicks", "spend", "sales", "orders"],
 };
 

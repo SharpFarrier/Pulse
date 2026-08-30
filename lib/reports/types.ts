@@ -52,6 +52,7 @@ export interface SearchTermRow {
   campaign_name: string;
   ad_group?: string | null;
   search_term: string;
+  target?: string | null; // the keyword/target that triggered this search term
   match_type?: string | null;
   impressions: number;
   clicks: number;

@@ -85,6 +85,7 @@ const TARGETING_MAP: FieldMap = {
 const SEARCH_TERM_MAP: FieldMap = {
   ...COMMON,
   "customer search term": "search_term",
+  "targeting": "target",
 };
 
 const PRODUCT_MAP: FieldMap = {
