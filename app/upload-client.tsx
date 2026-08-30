@@ -3,6 +3,9 @@
 import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Upload, Check, ShieldCheck, ShieldAlert, Info, Loader2 } from "lucide-react";
+import { parseWorkbook, ReportParseError } from "@/lib/reports/parse";
+import { stage, TABLE, type StagedSummary } from "@/lib/reports/ingest";
+import type { ParsedReport } from "@/lib/reports/types";
 
 const REPORT_LABEL: Record<string, string> = {
   campaign: "Campaign",
@@ -11,29 +14,14 @@ const REPORT_LABEL: Record<string, string> = {
   advertised_product: "Advertised-product",
 };
 
+const CHUNK = 1500;
+
 export interface RecentUpload {
   uploaded_at: string;
   report_types: string[];
   date_range_start: string;
   date_range_end: string;
   row_count: number;
-}
-
-interface PerType {
-  reportType: string;
-  label: string;
-  filename: string;
-  rows: number;
-}
-interface Summary {
-  ok: boolean;
-  errors: string[];
-  warnings: string[];
-  hasCampaignReport: boolean;
-  dateStart: string | null;
-  dateEnd: string | null;
-  perType: PerType[];
-  totalRows: number;
 }
 
 function fmtDate(iso: string) {
@@ -49,61 +37,101 @@ function fmtDateTime(iso: string) {
 export default function UploadClient({ recent }: { recent: RecentUpload[] }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
-  const [files, setFiles] = useState<File[]>([]);
-  const [summary, setSummary] = useState<Summary | null>(null);
+  const [reports, setReports] = useState<ParsedReport[]>([]);
+  const [summary, setSummary] = useState<StagedSummary | null>(null);
   const [busy, setBusy] = useState(false);
   const [committing, setCommitting] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
 
-  const preview = useCallback(async (fs: File[]) => {
-    setFiles(fs);
+  // Parse in the browser — the raw files never leave the machine.
+  const handleFiles = useCallback(async (fileList: File[]) => {
     setSaved(null);
     setSummary(null);
-    if (fs.length === 0) return;
+    setReports([]);
+    if (fileList.length === 0) return;
     setBusy(true);
-    try {
-      const fd = new FormData();
-      fs.forEach((f) => fd.append("files", f));
-      const res = await fetch("/api/upload", { method: "POST", body: fd });
-      const json = await res.json();
-      setSummary(json.summary ?? { ok: false, errors: [json.error ?? "Upload failed"], warnings: [], hasCampaignReport: false, dateStart: null, dateEnd: null, perType: [], totalRows: 0 });
-    } catch {
-      setSummary({ ok: false, errors: ["Could not reach the server."], warnings: [], hasCampaignReport: false, dateStart: null, dateEnd: null, perType: [], totalRows: 0 });
-    } finally {
-      setBusy(false);
+    // let the "Reading…" state paint before the heavy parse blocks the thread
+    await new Promise((r) => setTimeout(r, 30));
+    const parsed: ParsedReport[] = [];
+    const parseErrors: string[] = [];
+    for (const file of fileList) {
+      try {
+        const u8 = new Uint8Array(await file.arrayBuffer());
+        parsed.push(parseWorkbook(u8, file.name));
+      } catch (e) {
+        parseErrors.push(e instanceof ReportParseError ? e.message : `${file.name}: could not read file`);
+      }
     }
+    const s = stage(parsed);
+    s.errors.push(...parseErrors);
+    if (parseErrors.length) s.ok = false;
+    setReports(parsed);
+    setSummary(s);
+    setBusy(false);
   }, []);
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    preview(Array.from(e.dataTransfer.files));
-  }, [preview]);
+    handleFiles(Array.from(e.dataTransfer.files));
+  }, [handleFiles]);
 
   const acceptAndSave = useCallback(async () => {
-    if (!summary?.ok || files.length === 0) return;
+    if (!summary?.ok || reports.length === 0) return;
     setCommitting(true);
+    setProgress({ done: 0, total: summary.totalRows });
     try {
-      const fd = new FormData();
-      files.forEach((f) => fd.append("files", f));
-      const res = await fetch("/api/upload?commit=1", { method: "POST", body: fd });
-      const json = await res.json();
-      if (res.ok && json.result) {
-        setSaved(`Saved ${json.result.inserted.toLocaleString("en-IN")} rows · ${fmtDate(json.result.dateStart)} – ${fmtDate(json.result.dateEnd)}${json.result.deleted ? ` · replaced ${json.result.deleted} superseded` : ""}`);
-        setFiles([]);
-        setSummary(null);
-        router.refresh();
-      } else {
-        setSummary((s) => s ? { ...s, ok: false, errors: [json.error ?? "Save failed"] } : s);
+      const ranges = reports.map((r) => ({ table: TABLE[r.reportType], dateStart: r.dateStart, dateEnd: r.dateEnd }));
+      const beginRes = await fetch("/api/commit/begin", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          reportTypes: reports.map((r) => r.reportType),
+          filenames: reports.map((r) => r.filename),
+          dateStart: summary.dateStart,
+          dateEnd: summary.dateEnd,
+          totalRows: summary.totalRows,
+          ranges,
+        }),
+      });
+      const beginJson = await beginRes.json();
+      if (!beginRes.ok) throw new Error(beginJson.error || "Could not start the save");
+      const uploadId = beginJson.uploadId as string;
+
+      let done = 0;
+      for (const r of reports) {
+        const table = TABLE[r.reportType];
+        for (let i = 0; i < r.rows.length; i += CHUNK) {
+          const chunk = r.rows.slice(i, i + CHUNK);
+          const res = await fetch("/api/commit/rows", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ uploadId, table, rows: chunk }),
+          });
+          const j = await res.json();
+          if (!res.ok) throw new Error(j.error || "A batch failed to save");
+          done += chunk.length;
+          setProgress({ done, total: summary.totalRows });
+        }
       }
+
+      setSaved(`Saved ${summary.totalRows.toLocaleString("en-IN")} rows · ${fmtDate(summary.dateStart!)} – ${fmtDate(summary.dateEnd!)}${beginJson.deleted ? ` · replaced ${beginJson.deleted} superseded` : ""}`);
+      setReports([]);
+      setSummary(null);
+      router.refresh();
+    } catch (e) {
+      setSummary((s) => (s ? { ...s, ok: false, errors: [(e as Error).message] } : s));
     } finally {
       setCommitting(false);
+      setProgress(null);
     }
-  }, [summary, files, router]);
+  }, [summary, reports, router]);
 
   const card: React.CSSProperties = { border: "0.5px solid var(--border)", borderRadius: 12, overflow: "hidden" };
   const gridCols = "1.6fr 1.2fr 0.7fr 0.6fr";
+  const pct = progress && progress.total ? Math.round((progress.done / progress.total) * 100) : 0;
 
   return (
     <div>
@@ -131,7 +159,7 @@ export default function UploadClient({ recent }: { recent: RecentUpload[] }) {
         <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>XLSX or CSV · daily grain · multiple files at once</div>
         <input
           ref={inputRef} type="file" multiple accept=".csv,.xlsx,.xls" hidden
-          onChange={(e) => preview(Array.from(e.target.files ?? []))}
+          onChange={(e) => handleFiles(Array.from(e.target.files ?? []))}
         />
       </div>
 
@@ -191,6 +219,17 @@ export default function UploadClient({ recent }: { recent: RecentUpload[] }) {
             <span>Overlapping dates replace the earlier upload (last-write-wins); the old snapshot stays in the log.</span>
           </div>
 
+          {committing && progress && (
+            <div style={{ marginBottom: "1.25rem" }}>
+              <div style={{ height: 6, background: "var(--surface-1)", borderRadius: 999, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${pct}%`, background: "var(--good-cell)", transition: "width 0.2s" }} />
+              </div>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 6 }}>
+                Saving… {pct}% · {progress.done.toLocaleString("en-IN")} / {progress.total.toLocaleString("en-IN")} rows
+              </div>
+            </div>
+          )}
+
           <div style={{ display: "flex", gap: 10, marginBottom: "2rem" }}>
             <button
               onClick={acceptAndSave}
@@ -200,7 +239,8 @@ export default function UploadClient({ recent }: { recent: RecentUpload[] }) {
               {committing ? "Saving…" : "Accept and save"}
             </button>
             <button
-              onClick={() => { setFiles([]); setSummary(null); }}
+              onClick={() => { setReports([]); setSummary(null); }}
+              disabled={committing}
               style={{ background: "transparent", border: "0.5px solid var(--border-strong)", borderRadius: "var(--radius)", padding: "9px 16px", fontSize: 13, color: "var(--text-primary)" }}
             >
               Cancel

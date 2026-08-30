@@ -43,7 +43,8 @@ function toISODate(v: unknown): string | null {
 export class ReportParseError extends Error {}
 
 export function parseWorkbook(buf: ArrayBuffer | Uint8Array | Buffer, filename: string): ParsedReport {
-  const wb = XLSX.read(buf, { type: "buffer", cellDates: false });
+  const data = buf instanceof Uint8Array ? buf : new Uint8Array(buf as ArrayBuffer);
+  const wb = XLSX.read(data, { type: "array", cellDates: false });
   const sheet = wb.Sheets[wb.SheetNames[0]];
   if (!sheet) throw new ReportParseError(`${filename}: no sheet found`);
 
