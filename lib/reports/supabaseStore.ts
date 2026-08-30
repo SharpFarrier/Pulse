@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { AnyRow } from "./types";
 import type { Store, UploadMeta } from "./ingest";
+import { COLUMNS } from "./ingest";
 
 // Real Store backed by Supabase. Use the SERVICE ROLE key — server-side only,
 // never expose it to the browser. Reuses the shared project that AdsLens /
@@ -45,9 +46,18 @@ export class SupabaseStore implements Store {
   }
 
   async insertRows(table: string, rows: AnyRow[], uploadId: string): Promise<number> {
+    const cols = COLUMNS[table];
+    if (!cols) throw new Error(`insertRows: unknown table ${table}`);
     let inserted = 0;
     for (let i = 0; i < rows.length; i += CHUNK) {
-      const chunk = rows.slice(i, i + CHUNK).map((r) => ({ ...r, upload_id: uploadId }));
+      const chunk = rows.slice(i, i + CHUNK).map((r) => {
+        const src = r as unknown as Record<string, unknown>;
+        const clean: Record<string, unknown> = { upload_id: uploadId };
+        for (const c of cols) {
+          if (src[c] !== undefined) clean[c] = src[c];
+        }
+        return clean;
+      });
       const { error } = await this.db.from(table).insert(chunk);
       if (error) throw new Error(`insertRows ${table}: ${error.message}`);
       inserted += chunk.length;

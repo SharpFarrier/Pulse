@@ -9,6 +9,16 @@ export const TABLE: Record<ReportType, string> = {
   advertised_product: "pulse_product_daily",
 };
 
+// The exact columns each table has (excluding id + upload_id). Rows are projected
+// to these before insert, so a field the parser attaches but the table lacks
+// (e.g. `units`, which only pulse_campaign_daily has) can never break an insert.
+export const COLUMNS: Record<string, string[]> = {
+  pulse_campaign_daily: ["date", "campaign_name", "portfolio", "ad_type", "state", "budget", "impressions", "clicks", "spend", "sales", "orders", "units"],
+  pulse_target_daily: ["date", "campaign_name", "ad_group", "target", "match_type", "impressions", "clicks", "spend", "sales", "orders", "bid", "suggested_bid"],
+  pulse_search_term_daily: ["date", "campaign_name", "ad_group", "search_term", "match_type", "impressions", "clicks", "spend", "sales", "orders"],
+  pulse_product_daily: ["date", "campaign_name", "ad_group", "asin", "sku", "impressions", "clicks", "spend", "sales", "orders"],
+};
+
 // The ingest logic is pure: it talks to storage through this interface only, so
 // it can be unit-tested with an in-memory store and run for real against Supabase.
 export interface Store {
