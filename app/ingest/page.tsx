@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/reports/supabaseStore";
-import UploadClient, { type RecentUpload } from "../upload-client";
+import IngestTabs from "../ingest-tabs";
+import type { RecentUpload } from "../upload-client";
 
 export const dynamic = "force-dynamic";
 
@@ -20,5 +21,5 @@ async function getRecentUploads(): Promise<RecentUpload[]> {
 
 export default async function IngestPage() {
   const recent = await getRecentUploads();
-  return <UploadClient recent={recent} />;
+  return <IngestTabs recent={recent} />;
 }

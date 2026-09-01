@@ -13,7 +13,7 @@ export function iso(y: number, m: number, d: number) { return `${y}-${String(m +
 export function parseIso(s: string) { const [y, m, d] = s.split("-").map(Number); return { y, m: m - 1, d }; }
 
 // A single iOS-style wheel. Native scroll-snap; the centered row is the value.
-function Wheel({ items, index, onChange, width, mono }: { items: string[]; index: number; onChange: (i: number) => void; width: string; mono?: boolean }) {
+export function Wheel({ items, index, onChange, width, mono }: { items: string[]; index: number; onChange: (i: number) => void; width: string; mono?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const t = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -78,6 +78,26 @@ function DateWheels({ value, min, max, onChange }: { value: string; min: string;
         <Wheel items={years.map(String)} index={y - minY} width="28%" mono onChange={(i) => set(minY + i, m, d)} />
       </div>
       <style>{`.pulse-wheel::-webkit-scrollbar{display:none}`}</style>
+    </div>
+  );
+}
+
+
+const MONTHS_FULL = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+// value / onChange use 'YYYY-MM'. Compact two-wheel month picker in Pulse theme.
+export function MonthPicker({ value, minYear, maxYear, onChange }: { value: string; minYear: number; maxYear: number; onChange: (v: string) => void }) {
+  const [y, m] = value.split("-").map(Number);
+  const years = Array.from({ length: maxYear - minYear + 1 }, (_, i) => minYear + i);
+  return (
+    <div style={{ position: "relative", border: "0.5px solid var(--border)", borderRadius: 14, background: "var(--surface-2)", overflow: "hidden", width: 240 }}>
+      <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 34, transform: "translateY(-50%)", background: "var(--surface-1)", borderTop: "0.5px solid var(--border-strong)", borderBottom: "0.5px solid var(--border-strong)", pointerEvents: "none" }} />
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 102, background: "linear-gradient(var(--surface-2), transparent)", pointerEvents: "none", zIndex: 2 }} />
+      <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 102, background: "linear-gradient(transparent, var(--surface-2))", pointerEvents: "none", zIndex: 2 }} />
+      <div style={{ display: "flex", justifyContent: "center", gap: 4, position: "relative", zIndex: 1 }}>
+        <Wheel items={MONTHS_FULL} index={m - 1} width="58%" onChange={(i) => onChange(`${y}-${String(i + 1).padStart(2, "0")}`)} />
+        <Wheel items={years.map(String)} index={Math.max(0, y - minYear)} width="40%" mono onChange={(i) => onChange(`${minYear + i}-${String(m).padStart(2, "0")}`)} />
+      </div>
     </div>
   );
 }
