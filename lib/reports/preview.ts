@@ -66,17 +66,25 @@ function dayPoint(date: string, rows: CampaignDailyRow[]): DayPoint {
 }
 
 // windowDays = KPI/table period (7 or 30). stripDays = the recent-week strip length.
-export function computePreview(all: CampaignDailyRow[], windowDays: number, stripDays = 7): Preview {
+export type Period = number | { start: string; end: string };
+
+function dayspan(start: string, end: string): number {
+  return Math.round((Date.parse(end + "T00:00:00Z") - Date.parse(start + "T00:00:00Z")) / 86400000) + 1;
+}
+
+export function computePreview(all: CampaignDailyRow[], period: Period, stripDays = 7): Preview {
+  const windowDays = typeof period === "number" ? period : dayspan(period.start, period.end);
   if (all.length === 0) {
     return { maxDate: null, windowDays, periodStart: null, periodEnd: null, kpi: null, trend: [], campaigns: [] };
   }
   const maxDate = all.reduce((m, r) => (r.date > m ? r.date : m), all[0].date);
-  const periodStart = addDays(maxDate, -(windowDays - 1));
+  const periodEnd = typeof period === "number" ? maxDate : period.end;
+  const periodStart = typeof period === "number" ? addDays(periodEnd, -(windowDays - 1)) : period.start;
   const prevEnd = addDays(periodStart, -1);
   const prevStart = addDays(prevEnd, -(windowDays - 1));
-  const stripStart = addDays(maxDate, -(stripDays - 1));
+  const stripStart = addDays(periodEnd, -(stripDays - 1));
 
-  const inCur = (d: string) => d >= periodStart && d <= maxDate;
+  const inCur = (d: string) => d >= periodStart && d <= periodEnd;
   const inPrev = (d: string) => d >= prevStart && d <= prevEnd;
 
   const cur = all.filter((r) => inCur(r.date));
@@ -118,5 +126,5 @@ export function computePreview(all: CampaignDailyRow[], windowDays: number, stri
     return { campaign_name: name, ...m, verdict: verdictFromAcos(m.acos), acosDeltaPp, strip, days };
   }).sort((a, b) => b.spend - a.spend);
 
-  return { maxDate, windowDays, periodStart, periodEnd: maxDate, kpi, trend, campaigns };
+  return { maxDate, windowDays, periodStart, periodEnd, kpi, trend, campaigns };
 }

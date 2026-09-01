@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useCallback } from "react";
 import { computePreview, type CampaignDailyRow, type CampaignAgg, type DayPoint } from "@/lib/reports/preview";
+import DateRangePicker, { parseIso } from "./drum-picker";
 
 const CELL = { good: "var(--good-cell)", okay: "var(--okay-cell)", pause: "var(--pause-cell)" } as const;
 const BADGE = {
@@ -36,11 +37,19 @@ function Delta({ cur, prev, invert = false, unit = "%" }: { cur: number | null; 
 
 export default function PreviewClient({ rows }: { rows: CampaignDailyRow[] }) {
   const [windowDays, setWindowDays] = useState(7);
+  const [customRange, setCustomRange] = useState<{ start: string; end: string } | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [openRow, setOpenRow] = useState<string | null>(null);
   const hasSB = useMemo(() => rows.some((r) => (r.ad_product ?? "SP") === "SB"), [rows]);
   const [product, setProduct] = useState<"ALL" | "SP" | "SB">("ALL");
   const filtered = useMemo(() => (product === "ALL" ? rows : rows.filter((r) => (r.ad_product ?? "SP") === product)), [rows, product]);
-  const pv = useMemo(() => computePreview(filtered, windowDays), [filtered, windowDays]);
+  const bounds = useMemo(() => {
+    if (rows.length === 0) return null;
+    let mn = rows[0].date, mx = rows[0].date;
+    for (const r of rows) { if (r.date < mn) mn = r.date; if (r.date > mx) mx = r.date; }
+    return { mn, mx };
+  }, [rows]);
+  const pv = useMemo(() => computePreview(filtered, customRange ?? windowDays), [filtered, windowDays, customRange]);
   const productLabel = product === "ALL" ? "Combined · SP + Brands" : product === "SB" ? "Sponsored Brands" : "Sponsored Products";
 
   if (!pv.kpi || pv.maxDate === null) {
@@ -70,12 +79,27 @@ export default function PreviewClient({ rows }: { rows: CampaignDailyRow[] }) {
           {hasSB && (["ALL", "SP", "SB"] as const).map((pk) => (
             <button key={pk} onClick={() => setProduct(pk)} style={{ fontSize: 13, borderRadius: "var(--radius)", padding: "6px 12px", cursor: "pointer", fontWeight: product === pk ? 500 : 400, background: product === pk ? "var(--good-fg)" : "transparent", color: product === pk ? "#fff" : "var(--text-secondary)", border: product === pk ? "none" : "0.5px solid var(--border)" }}>{pk === "ALL" ? "Combined" : pk === "SB" ? "Brands" : "Products"}</button>
           ))}
-          {periods.map(([d, label]) => (
-            <button key={d} onClick={() => setWindowDays(d)} style={{ fontSize: 13, borderRadius: "var(--radius)", padding: "6px 12px", cursor: "pointer", fontWeight: windowDays === d ? 500 : 400, background: windowDays === d ? "var(--text-primary)" : "transparent", color: windowDays === d ? "var(--surface-2)" : "var(--text-secondary)", border: windowDays === d ? "none" : "0.5px solid var(--border)" }}>{label}</button>
-          ))}
+          {periods.map(([d, label]) => {
+            const active = !customRange && windowDays === d;
+            return (
+            <button key={d} onClick={() => { setWindowDays(d); setCustomRange(null); setPickerOpen(false); }} style={{ fontSize: 13, borderRadius: "var(--radius)", padding: "6px 12px", cursor: "pointer", fontWeight: active ? 500 : 400, background: active ? "var(--text-primary)" : "transparent", color: active ? "var(--surface-2)" : "var(--text-secondary)", border: active ? "none" : "0.5px solid var(--border)" }}>{label}</button>
+          );})}
+          <button onClick={() => setPickerOpen((o) => !o)} style={{ fontSize: 13, borderRadius: "var(--radius)", padding: "6px 12px", cursor: "pointer", fontWeight: customRange ? 500 : 400, background: customRange ? "var(--text-primary)" : "transparent", color: customRange ? "var(--surface-2)" : "var(--text-secondary)", border: customRange ? "none" : "0.5px solid var(--border)" }}>{customRange ? `${d2(customRange.start)} – ${d2(customRange.end)}` : "Custom"}</button>
         </div>
       </div>
 
+      {pickerOpen && bounds && (
+        <div style={{ marginBottom: "1.5rem" }}>
+          <DateRangePicker
+            start={customRange?.start ?? (pv.periodStart ?? bounds.mn)}
+            end={customRange?.end ?? (pv.periodEnd ?? bounds.mx)}
+            min={bounds.mn}
+            max={bounds.mx}
+            onApply={(st, en) => { setCustomRange({ start: st, end: en }); setPickerOpen(false); }}
+            onCancel={() => setPickerOpen(false)}
+          />
+        </div>
+      )}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 12, marginBottom: "1.5rem" }}>
         <div style={{ background: "var(--good-bg)", borderRadius: 12, padding: "0.9rem 1.1rem" }}>
           <div style={{ fontSize: 13, color: "var(--good-fg)" }}>ACOS</div>
