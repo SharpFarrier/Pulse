@@ -7,6 +7,7 @@ export default function Nav() {
   const items = [
     { href: "/", label: "Daily preview" },
     { href: "/monthly", label: "Monthly review" },
+    { href: "/ask", label: "Ask" },
     { href: "/ingest", label: "Ingest reports" },
   ];
   return (

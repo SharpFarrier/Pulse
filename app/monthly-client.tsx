@@ -3,6 +3,7 @@
 import { useMemo, useState, useCallback } from "react";
 import { computeMonthly, type Blended, type CampaignMonth } from "@/lib/reports/monthly";
 import type { CampaignDailyRow } from "@/lib/reports/preview";
+import { ollamaChat, extractJSON, OllamaError } from "./llm-client";
 
 const GREEN = "#0F6E56", RED = "#A32D2D";
 
@@ -47,12 +48,13 @@ export default function MonthlyClient({ rows }: { rows: CampaignDailyRow[] }) {
       current: m.cur, previous: m.prev,
       campaigns: m.campaigns.slice(0, 15).map((c) => ({ name: c.campaign_name, current: c.cur, previous: c.prev })),
     };
+    const system = `You are an Amazon Advertising analyst writing a concise month-on-month review for a founder. You are given ALREADY-COMPUTED figures (blended totals for the current and prior month, and per-campaign spend/sales/orders/ROAS). Use ONLY these numbers; never invent a figure. If prior-month data is missing, write about the current month only and claim no changes. Thresholds: ROAS >=10 good, 5-10 okay, <5 weak. Return STRICT JSON only: {"headline":"2-3 sentences","winners":[{"name":"campaign","note":"one line citing numbers"}],"watch":[{"name":"campaign","note":"one line citing numbers"}],"strategic":"2-4 sentences"}. At most 4 winners and 4 watch items, chosen by materiality.`;
     try {
-      const res = await fetch("/api/monthly-narrative", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ summary }) });
-      const j = await res.json();
-      if (res.ok && j.narrative) setNarr(j.narrative);
-      else setNError(j.error || "Could not generate the narrative.");
-    } catch { setNError("Could not reach the narrative service."); } finally { setNLoading(false); }
+      const raw = await ollamaChat(system, `Month summary JSON:\n${JSON.stringify(summary)}\n\nReturn the review as strict JSON only.`, { json: true });
+      const parsed = extractJSON<Narrative>(raw);
+      if (parsed && parsed.headline) setNarr(parsed);
+      else setNError("Llama replied but the JSON didn't parse — try Generate again.");
+    } catch (e) { setNError(e instanceof OllamaError ? e.message : "Could not generate the narrative."); } finally { setNLoading(false); }
   }, [m]);
 
   if (!m.month) {
