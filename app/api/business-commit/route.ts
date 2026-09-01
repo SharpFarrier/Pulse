@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
       for (const c of COLS) if (c !== "period" && (r as unknown as Record<string, unknown>)[c] !== undefined) o[c] = (r as unknown as Record<string, unknown>)[c];
       return o;
     });
-    const { error: insErr } = await db.from("pulse_business_monthly").insert(clean);
+    const { error: insErr } = await db.from("pulse_business_monthly").upsert(clean, { onConflict: "period,asin" });
     if (insErr) throw new Error(insErr.message);
 
     return NextResponse.json({ inserted: rows.length, deleted: del?.length ?? 0 });

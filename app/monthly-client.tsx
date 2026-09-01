@@ -29,7 +29,7 @@ function change(cur: number | null, prev: number | null, kind: "pct" | "pp", goo
 
 interface Narrative { headline: string; winners: { name: string; note: string }[]; watch: { name: string; note: string }[]; strategic: string; }
 
-export default function MonthlyClient({ rows }: { rows: CampaignDailyRow[] }) {
+export default function MonthlyClient({ rows, businessRevenue }: { rows: CampaignDailyRow[]; businessRevenue: Record<string, number> }) {
   const [month, setMonth] = useState<string | undefined>(undefined);
   const [narr, setNarr] = useState<Narrative | null>(null);
   const [nLoading, setNLoading] = useState(false);
@@ -62,14 +62,19 @@ export default function MonthlyClient({ rows }: { rows: CampaignDailyRow[] }) {
   }
 
   const { cur, prev, hasPrev } = m;
+  const revThis = m.month ? businessRevenue[m.month] : undefined;
+  const revPrev = m.prevMonth ? businessRevenue[m.prevMonth] : undefined;
+  const tacos = revThis && revThis > 0 ? (cur.spend / revThis) * 100 : null;      // ad spend / total revenue
+  const tacosPrev = revPrev && revPrev > 0 && prev ? (prev.spend / revPrev) * 100 : null;
   const chartCamps = m.campaigns.slice(0, 8);
   const chartMax = Math.max(6, ...chartCamps.flatMap((c) => [c.cur.roas ?? 0, c.prev?.roas ?? 0]));
 
-  const kpis: { label: string; val: string; ch: ReturnType<typeof change> }[] = [
+  const kpis: { label: string; val: string; ch: ReturnType<typeof change>; sub?: string }[] = [
     { label: "AD SPEND", val: inr(cur.spend), ch: change(cur.spend, prev?.spend ?? null, "pct", "flat") },
     { label: "AD SALES", val: inr(cur.sales), ch: change(cur.sales, prev?.sales ?? null, "pct", "up") },
     { label: "BLENDED ACOS", val: cur.acos === null ? "—" : cur.acos.toFixed(2) + "%", ch: change(cur.acos, prev?.acos ?? null, "pp", "down") },
     { label: "BLENDED ROAS", val: cur.roas === null ? "—" : cur.roas.toFixed(2) + "x", ch: change(cur.roas, prev?.roas ?? null, "pct", "up") },
+    { label: "TACOS", val: tacos === null ? "—" : tacos.toFixed(2) + "%", ch: change(tacos, tacosPrev, "pp", "down"), sub: tacos === null ? "upload this month's Business report" : "ad spend \u00f7 total revenue" },
   ];
 
   const rowsDef: { label: string; get: (b: Blended) => number | null; fmt: (n: number | null) => string; kind: "pct" | "pp"; good: Dir }[] = [
@@ -130,6 +135,7 @@ export default function MonthlyClient({ rows }: { rows: CampaignDailyRow[] }) {
             <div style={{ fontSize: 22, fontWeight: 500 }}>{k.val}</div>
             <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{k.label}</div>
             {k.ch && <div style={{ fontSize: 12, color: k.ch.color, marginTop: 6 }}>{k.ch.txt}</div>}
+            {k.sub && <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 3 }}>{k.sub}</div>}
           </div>
         ))}
       </div>

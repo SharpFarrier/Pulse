@@ -25,7 +25,21 @@ async function getCampaignRows(): Promise<CampaignDailyRow[]> {
   }
 }
 
+async function getBusinessRevenue(): Promise<Record<string, number>> {
+  try {
+    const db = supabaseAdmin();
+    const { data, error } = await db.from("pulse_business_monthly").select("period, ordered_product_sales");
+    if (error || !data) return {};
+    const m: Record<string, number> = {};
+    for (const r of data as { period: string; ordered_product_sales: number }[]) {
+      const k = (r.period as string).slice(0, 7);
+      m[k] = (m[k] ?? 0) + (r.ordered_product_sales || 0);
+    }
+    return m;
+  } catch { return {}; }
+}
+
 export default async function MonthlyPage() {
-  const rows = await getCampaignRows();
-  return <MonthlyClient rows={rows} />;
+  const [rows, businessRevenue] = await Promise.all([getCampaignRows(), getBusinessRevenue()]);
+  return <MonthlyClient rows={rows} businessRevenue={businessRevenue} />;
 }
