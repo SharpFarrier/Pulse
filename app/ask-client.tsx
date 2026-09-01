@@ -27,6 +27,29 @@ function agg(rows: CampaignDailyRow[], start: string, end: string, perCampaign: 
 
 const CHIPS = ["What's my ACOS for the last week?", "What's pulling ACOS up this week?", "Which campaigns improved vs last week?", "How is spend tracking vs the previous week?"];
 
+
+function esc(s: string) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+function inlineMd(s: string) { return esc(s).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>"); }
+function Markdown({ text }: { text: string }) {
+  const blocks = text.trim().split(/\n\s*\n/).filter(Boolean);
+  return (
+    <>
+      {blocks.map((b, i) => {
+        const lines = b.split("\n").filter((l) => l.trim() !== "");
+        const isList = lines.length > 0 && lines.every((l) => /^\s*([-*]|\d+[.)])\s+/.test(l));
+        if (isList) {
+          return (
+            <ul key={i} style={{ margin: "8px 0", paddingLeft: 18 }}>
+              {lines.map((l, j) => <li key={j} style={{ marginBottom: 4 }} dangerouslySetInnerHTML={{ __html: inlineMd(l.replace(/^\s*([-*]|\d+[.)])\s+/, "")) }} />)}
+            </ul>
+          );
+        }
+        return <p key={i} style={{ margin: "6px 0" }} dangerouslySetInnerHTML={{ __html: inlineMd(b).replace(/\n/g, "<br/>") }} />;
+      })}
+    </>
+  );
+}
+
 export default function AskClient({ rows }: { rows: CampaignDailyRow[] }) {
   const [q, setQ] = useState("");
   const [thread, setThread] = useState<{ q: string; a: string }[]>([]);
@@ -47,7 +70,7 @@ export default function AskClient({ rows }: { rows: CampaignDailyRow[] }) {
   const ask = useCallback(async (question: string) => {
     if (!question.trim() || !ctx || loading) return;
     setErr(null); setLoading(true); setQ("");
-    const system = `You are Pulse, an assistant answering questions about this Amazon Advertising account using ONLY the JSON data provided. Amounts are INR. Lead with the number, be concise (2-5 sentences), and cite actual figures from the data. For "what's pulling ACOS up/down", compare last7 vs previousWeek per campaign and name the biggest movers with their figures. Thresholds: ACOS <=10% good, 10-20% okay, >20% high (ROAS >=10/5-10/<5). If the question needs data not in the JSON (specific search terms, months not shown), answer what you can and say what's out of scope. Do not invent numbers.`;
+    const system = `You are Pulse, an assistant answering questions about this Amazon Advertising account using ONLY the JSON data provided. Amounts are INR. Lead with the number, be concise (2-5 sentences), and cite actual figures from the data. For "what's pulling ACOS up/down", compare last7 vs previousWeek per campaign and name the biggest movers with their figures. Thresholds: ACOS <=10% good, 10-20% okay, >20% high (ROAS >=10/5-10/<5). If the question needs data not in the JSON (specific search terms, months not shown), answer what you can and say what's out of scope. Do not invent numbers.\n\nFORMAT: money in INR with the rupee sign, abbreviating large amounts in lakhs/crores (114493 -> Rs1.14L, 2092955 -> Rs20.9L, over a crore -> Rs1.5Cr). Percentages to one decimal (13.2%). ROAS to one decimal with an x (10.7x). Use light markdown: put **the key figure in bold**, and use "- " bullet lists for multiple campaigns (one per line: **Name** followed by its figures). Keep it tight.`;
     try {
       const a = await ollamaChat(system, `DATA:\n${JSON.stringify(ctx)}\n\nQUESTION: ${question}`);
       setThread((t) => [...t, { q: question, a }]);
@@ -69,7 +92,7 @@ export default function AskClient({ rows }: { rows: CampaignDailyRow[] }) {
           <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
             <span style={{ fontSize: 14, background: "var(--surface-1)", borderRadius: "14px 14px 4px 14px", padding: "9px 14px", maxWidth: "80%" }}>{t.q}</span>
           </div>
-          <div style={{ border: "0.5px solid var(--border)", borderRadius: "4px 14px 14px 14px", padding: "12px 16px", background: "var(--surface-2)", fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{t.a}</div>
+          <div style={{ border: "0.5px solid var(--border)", borderRadius: "4px 14px 14px 14px", padding: "12px 16px", background: "var(--surface-2)", fontSize: 14, lineHeight: 1.6 }}><Markdown text={t.a} /></div>
         </div>
       ))}
 
