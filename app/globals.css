@@ -32,3 +32,9 @@ html, body {
 }
 
 button { font-family: var(--font-sans); cursor: pointer; }
+
+@media print {
+  nav, .no-print { display: none !important; }
+  body { background: #fff; }
+  main { max-width: none !important; padding: 0 !important; }
+}
