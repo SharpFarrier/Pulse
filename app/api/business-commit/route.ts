@@ -36,7 +36,10 @@ export async function POST(req: NextRequest) {
       return o;
     });
     const { error: insErr } = await db.from("pulse_business_monthly").upsert(clean, { onConflict: "period,asin" });
-    if (insErr) throw new Error(insErr.message);
+    if (insErr) {
+      await db.from("pulse_uploads").delete().eq("id", uploadId); // don't leave a phantom log row
+      throw new Error(insErr.message);
+    }
 
     return NextResponse.json({ inserted: rows.length, deleted: del?.length ?? 0 });
   } catch (e) {
