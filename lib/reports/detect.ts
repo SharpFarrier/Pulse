@@ -1,4 +1,4 @@
-import type { ReportType } from "./types";
+import type { ReportType, AdProduct } from "./types";
 
 // ---------------------------------------------------------------------------
 // Header helpers
@@ -20,9 +20,25 @@ function hasHeader(headers: Set<string>, name: string): boolean {
 //   campaign           -> has "Campaign Name" and none of the above
 // ---------------------------------------------------------------------------
 
+// Sponsored Brands reports carry SB-only columns that SP reports never have.
+// New-to-Brand covers most, but the SB search-term report has none of those — it
+// (and every SB report) does carry "Cost Type" and "Viewable Impressions".
+export function detectAdProduct(rawHeaders: string[]): AdProduct {
+  return rawHeaders.some((h) => {
+    const n = normHeader(h);
+    return n.includes("new-to-brand") || n === "cost type" || n.includes("viewable impressions");
+  }) ? "SB" : "SP";
+}
+
+// True for the SB Placement report, which we do not ingest (use Campaign/Keyword/Search-term).
+export function isPlacementReport(rawHeaders: string[]): boolean {
+  return new Set(rawHeaders.map(normHeader)).has(normHeader("Placement Type"));
+}
+
 export function detectReportType(rawHeaders: string[]): ReportType | null {
   const headers = new Set(rawHeaders.map(normHeader));
 
+  if (hasHeader(headers, "Placement Type")) return null; // SB placement — skipped
   if (hasHeader(headers, "Customer Search Term")) return "search_term";
   if (hasHeader(headers, "Advertised ASIN") || hasHeader(headers, "Advertised SKU"))
     return "advertised_product";
@@ -55,6 +71,7 @@ const COMMON: FieldMap = {
   "7 day total sales": "sales",
   "7 day total sales (₹)": "sales",
   "14 day total sales": "sales",
+  "14 day total sales (₹)": "sales",
   "total sales": "sales",
   // orders aliases
   "orders": "orders",
@@ -63,6 +80,7 @@ const COMMON: FieldMap = {
   "total orders (#)": "orders",
   "units": "units",
   "7 day total units (#)": "units",
+  "14 day total units (#)": "units",
 };
 
 const CAMPAIGN_MAP: FieldMap = {

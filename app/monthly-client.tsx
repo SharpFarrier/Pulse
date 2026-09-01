@@ -33,7 +33,11 @@ export default function MonthlyClient({ rows }: { rows: CampaignDailyRow[] }) {
   const [narr, setNarr] = useState<Narrative | null>(null);
   const [nLoading, setNLoading] = useState(false);
   const [nError, setNError] = useState<string | null>(null);
-  const m = useMemo(() => computeMonthly(rows, month), [rows, month]);
+  const hasSB = useMemo(() => rows.some((r) => (r.ad_product ?? "SP") === "SB"), [rows]);
+  const [product, setProduct] = useState<"ALL" | "SP" | "SB">("ALL");
+  const filtered = useMemo(() => (product === "ALL" ? rows : rows.filter((r) => (r.ad_product ?? "SP") === product)), [rows, product]);
+  const m = useMemo(() => computeMonthly(filtered, month), [filtered, month]);
+  const productLabel = product === "ALL" ? "Combined · SP + Brands" : product === "SB" ? "Sponsored Brands" : "Sponsored Products";
 
   const genNarrative = useCallback(async () => {
     if (!m.month) return;
@@ -94,6 +98,13 @@ export default function MonthlyClient({ rows }: { rows: CampaignDailyRow[] }) {
         <select value={m.month} onChange={(e) => { setMonth(e.target.value); setNarr(null); setNError(null); }} style={{ fontSize: 13, padding: "6px 10px", borderRadius: "var(--radius)", border: "0.5px solid var(--border-strong)", background: "var(--surface-2)", fontFamily: "var(--font-sans)" }}>
           {m.availableMonths.map((mo) => <option key={mo} value={mo}>{monthName(mo)}</option>)}
         </select>
+        {hasSB && (
+          <div style={{ display: "inline-flex", gap: 6, marginLeft: 10 }}>
+            {(["ALL", "SP", "SB"] as const).map((pk) => (
+              <button key={pk} onClick={() => { setProduct(pk); setNarr(null); }} style={{ fontSize: 13, borderRadius: "var(--radius)", padding: "6px 12px", cursor: "pointer", fontWeight: product === pk ? 500 : 400, background: product === pk ? GREEN : "transparent", color: product === pk ? "#fff" : "var(--text-secondary)", border: product === pk ? "none" : "0.5px solid var(--border)" }}>{pk === "ALL" ? "Combined" : pk === "SB" ? "Brands" : "Products"}</button>
+            ))}
+          </div>
+        )}
         <div style={{ display: "flex", gap: 8 }}>
           {!narr && <button onClick={genNarrative} disabled={nLoading} style={{ fontSize: 13, padding: "7px 14px", borderRadius: "var(--radius)", border: `0.5px solid ${GREEN}`, background: "transparent", color: GREEN, fontWeight: 500 }}>{nLoading ? "Writing…" : "◆ Generate narrative"}</button>}
           <button onClick={() => window.print()} style={{ fontSize: 13, padding: "7px 14px", borderRadius: "var(--radius)", border: "none", background: "var(--text-primary)", color: "var(--surface-2)", fontWeight: 500 }}>Export PDF</button>
@@ -102,7 +113,7 @@ export default function MonthlyClient({ rows }: { rows: CampaignDailyRow[] }) {
 
       <div style={{ borderBottom: `2px solid ${GREEN}`, paddingBottom: 12, marginBottom: 14 }}>
         <div style={{ fontSize: 22, fontWeight: 500, lineHeight: 1.2 }}>Amazon Advertising — Month-on-Month Review</div>
-        <div style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 4 }}>Honey Touch · {hasPrev ? `${monthShort(m.prevMonth!)} → ` : ""}<b style={{ color: "var(--text-primary)", fontWeight: 500 }}>{monthName(m.month)}</b> · India · ad-attributed · <span style={{ color: GREEN }}>Sponsored Products</span></div>
+        <div style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 4 }}>Honey Touch · {hasPrev ? `${monthShort(m.prevMonth!)} → ` : ""}<b style={{ color: "var(--text-primary)", fontWeight: 500 }}>{monthName(m.month)}</b> · India · ad-attributed · <span style={{ color: GREEN }}>{productLabel}</span></div>
       </div>
 
       {!hasPrev && <div className="no-print" style={{ fontSize: 12, color: "var(--okay-fg)", background: "var(--okay-bg)", borderRadius: "var(--radius)", padding: "8px 12px", marginBottom: 16 }}>Only {monthName(m.month)} is loaded — ingest the prior month to see month-on-month changes.</div>}
@@ -169,7 +180,7 @@ export default function MonthlyClient({ rows }: { rows: CampaignDailyRow[] }) {
       )}
       {!narr && !nLoading && <div className="no-print" style={{ fontSize: 12, color: "var(--text-muted)", border: "0.5px dashed var(--border-strong)", borderRadius: 8, padding: "12px 14px", marginBottom: 16 }}>The written analysis (headline, winners, watch, strategic take) is generated on demand — hit “Generate narrative” above.</div>}
 
-      <div style={{ fontSize: 10, color: "var(--text-muted)", lineHeight: 1.5, borderTop: "0.5px solid var(--border)", paddingTop: 10 }}>Data note: ad-attributed figures only, excludes organic. Sponsored Products only{/* becomes SP+SB once Sponsored Brands is ingested */}.</div>
+      <div style={{ fontSize: 10, color: "var(--text-muted)", lineHeight: 1.5, borderTop: "0.5px solid var(--border)", paddingTop: 10 }}>Data note: ad-attributed figures only, excludes organic. {product === "ALL" ? (hasSB ? "Combined Sponsored Products + Brands; blended sales mix SP 7-day and SB 14-day attribution." : "Sponsored Products only (ingest Sponsored Brands to blend).") : product === "SB" ? "Sponsored Brands only." : "Sponsored Products only."}</div>
     </div>
   );
 }

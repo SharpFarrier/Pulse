@@ -83,12 +83,12 @@ export default function UploadClient({ recent }: { recent: RecentUpload[] }) {
     setCommitting(true);
     setProgress({ done: 0, total: summary.totalRows });
     try {
-      const ranges = reports.map((r) => ({ table: TABLE[r.reportType], dateStart: r.dateStart, dateEnd: r.dateEnd }));
+      const ranges = reports.map((r) => ({ table: TABLE[r.reportType], dateStart: r.dateStart, dateEnd: r.dateEnd, adProduct: r.adProduct }));
       const beginRes = await fetch("/api/commit/begin", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          reportTypes: reports.map((r) => r.reportType),
+          reports: reports.map((r) => ({ reportType: r.reportType, adProduct: r.adProduct })),
           filenames: reports.map((r) => r.filename),
           dateStart: summary.dateStart,
           dateEnd: summary.dateEnd,
@@ -181,7 +181,7 @@ export default function UploadClient({ recent }: { recent: RecentUpload[] }) {
                 {summary.perType.map((p, i) => (
                   <div key={i} style={{ display: "grid", gridTemplateColumns: gridCols, gap: 8, padding: "11px 14px", borderTop: "0.5px solid var(--border)", fontSize: 13, alignItems: "center" }}>
                     <span style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>{p.filename}</span>
-                    <span>{REPORT_LABEL[p.reportType] ?? p.reportType}{p.reportType === "campaign" && (
+                    <span><span style={{ fontSize: 10, color: p.adProduct === "SB" ? "#6D28D9" : "var(--text-muted)", border: "0.5px solid var(--border)", borderRadius: "var(--radius)", padding: "0px 5px", marginRight: 6 }}>{p.adProduct}</span>{REPORT_LABEL[p.reportType] ?? p.reportType}{p.reportType === "campaign" && (
                       <span style={{ fontSize: 11, color: "var(--good-fg)", background: "var(--good-bg)", borderRadius: "var(--radius)", padding: "1px 6px", marginLeft: 6 }}>totals</span>
                     )}</span>
                     <span style={{ textAlign: "right", color: "var(--text-secondary)" }}>{p.rows.toLocaleString("en-IN")}</span>

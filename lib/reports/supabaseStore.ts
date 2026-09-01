@@ -34,13 +34,12 @@ export class SupabaseStore implements Store {
     return data!.id as string;
   }
 
-  async deleteRange(table: string, start: string, end: string): Promise<number> {
-    const { data, error } = await this.db
-      .from(table)
-      .delete()
-      .gte("date", start)
-      .lte("date", end)
-      .select("id");
+  async deleteRange(table: string, start: string, end: string, adProduct: string): Promise<number> {
+    let q = this.db.from(table).delete().gte("date", start).lte("date", end);
+    // Only the SP/SB-tagged tables carry ad_product; scope the delete to the same
+    // ad type so re-uploading one product never touches the other's rows.
+    if (COLUMNS[table]?.includes("ad_product")) q = q.eq("ad_product", adProduct);
+    const { data, error } = await q.select("id");
     if (error) throw new Error(`deleteRange ${table}: ${error.message}`);
     return data?.length ?? 0;
   }

@@ -6,6 +6,7 @@ import { acos, roas, verdictFromAcos, type Verdict } from "./metrics";
 export interface CampaignDailyRow {
   date: string;
   campaign_name: string;
+  ad_product?: string;
   impressions: number;
   clicks: number;
   spend: number;

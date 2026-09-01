@@ -12,7 +12,7 @@ async function getCampaignRows(): Promise<CampaignDailyRow[]> {
     for (let from = 0; ; from += size) {
       const { data, error } = await db
         .from("pulse_campaign_daily")
-        .select("date, campaign_name, impressions, clicks, spend, sales, orders")
+        .select("date, campaign_name, ad_product, impressions, clicks, spend, sales, orders")
         .order("date", { ascending: true })
         .range(from, from + size - 1);
       if (error || !data || data.length === 0) break;

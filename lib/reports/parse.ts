@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import { detectReportType, mapHeader, REQUIRED_FIELDS } from "./detect";
+import { detectReportType, detectAdProduct, isPlacementReport, mapHeader, REQUIRED_FIELDS } from "./detect";
 import type { AnyRow, ParsedReport, ReportType } from "./types";
 
 const INT_FIELDS = new Set(["impressions", "clicks", "orders", "units"]);
@@ -52,10 +52,16 @@ export function parseWorkbook(buf: ArrayBuffer | Uint8Array | Buffer, filename: 
   if (grid.length < 2) throw new ReportParseError(`${filename}: empty report`);
 
   const rawHeaders = (grid[0] as unknown[]).map((h) => String(h ?? ""));
+  const adProduct = detectAdProduct(rawHeaders);
+  if (isPlacementReport(rawHeaders)) {
+    throw new ReportParseError(
+      `${filename}: Sponsored Brands Placement report isn't ingested — use the Campaign, Keyword and Search-term reports.`
+    );
+  }
   const reportType = detectReportType(rawHeaders);
   if (!reportType) {
     throw new ReportParseError(
-      `${filename}: could not recognize this as an Amazon SP report (no Campaign / Targeting / Customer Search Term / Advertised ASIN column)`
+      `${filename}: could not recognize this as an Amazon report (no Campaign / Targeting / Customer Search Term / Advertised ASIN column)`
     );
   }
 
@@ -69,7 +75,7 @@ export function parseWorkbook(buf: ArrayBuffer | Uint8Array | Buffer, filename: 
   for (let i = 1; i < grid.length; i++) {
     const raw = grid[i] as unknown[];
     const rec: Record<string, unknown> = {
-      impressions: 0, clicks: 0, spend: 0, sales: 0, orders: 0, units: 0,
+      impressions: 0, clicks: 0, spend: 0, sales: 0, orders: 0, units: 0, ad_product: adProduct,
     };
     for (let c = 0; c < colField.length; c++) {
       const field = colField[c];
@@ -109,6 +115,7 @@ export function parseWorkbook(buf: ArrayBuffer | Uint8Array | Buffer, filename: 
 
   return {
     reportType: reportType as ReportType,
+    adProduct,
     filename,
     rows,
     dateStart: minDate as string,

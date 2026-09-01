@@ -1,6 +1,8 @@
 // Canonical shapes the rest of Pulse works with. Raw Amazon headers are
 // normalized into these by lib/reports/detect.ts + parse.ts.
 
+export type AdProduct = "SP" | "SB";
+
 export type ReportType =
   | "campaign"
   | "targeting"
@@ -20,6 +22,7 @@ export const TOTALS_SOURCE: ReportType = "campaign";
 export interface CampaignRow {
   date: string; // ISO yyyy-mm-dd
   campaign_name: string;
+  ad_product?: AdProduct;
   portfolio?: string | null;
   ad_type?: string | null;
   state?: string | null;
@@ -35,6 +38,7 @@ export interface CampaignRow {
 export interface TargetRow {
   date: string;
   campaign_name: string;
+  ad_product?: AdProduct;
   ad_group?: string | null;
   target: string;
   match_type?: string | null;
@@ -50,6 +54,7 @@ export interface TargetRow {
 export interface SearchTermRow {
   date: string;
   campaign_name: string;
+  ad_product?: AdProduct;
   ad_group?: string | null;
   search_term: string;
   target?: string | null; // the keyword/target that triggered this search term
@@ -79,6 +84,7 @@ export type AnyRow = CampaignRow | TargetRow | SearchTermRow | ProductRow;
 // One parsed file, ready to stage/commit.
 export interface ParsedReport {
   reportType: ReportType;
+  adProduct: AdProduct;
   filename: string;
   rows: AnyRow[];
   dateStart: string; // min date in rows

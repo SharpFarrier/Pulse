@@ -37,7 +37,11 @@ function Delta({ cur, prev, invert = false, unit = "%" }: { cur: number | null; 
 export default function PreviewClient({ rows }: { rows: CampaignDailyRow[] }) {
   const [windowDays, setWindowDays] = useState(7);
   const [openRow, setOpenRow] = useState<string | null>(null);
-  const pv = useMemo(() => computePreview(rows, windowDays), [rows, windowDays]);
+  const hasSB = useMemo(() => rows.some((r) => (r.ad_product ?? "SP") === "SB"), [rows]);
+  const [product, setProduct] = useState<"ALL" | "SP" | "SB">("ALL");
+  const filtered = useMemo(() => (product === "ALL" ? rows : rows.filter((r) => (r.ad_product ?? "SP") === product)), [rows, product]);
+  const pv = useMemo(() => computePreview(filtered, windowDays), [filtered, windowDays]);
+  const productLabel = product === "ALL" ? "Combined · SP + Brands" : product === "SB" ? "Sponsored Brands" : "Sponsored Products";
 
   if (!pv.kpi || pv.maxDate === null) {
     return (
@@ -60,9 +64,12 @@ export default function PreviewClient({ rows }: { rows: CampaignDailyRow[] }) {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.25rem", flexWrap: "wrap", gap: 10 }}>
         <div>
           <div style={{ fontSize: 20, fontWeight: 500 }}>Pulse · Amazon ads — daily preview</div>
-          <div style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 2 }}>Snapshot to {d2(pv.maxDate)} · Sponsored Products</div>
+          <div style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 2 }}>Snapshot to {d2(pv.maxDate)} · {productLabel}</div>
         </div>
-        <div style={{ display: "flex", gap: 6 }}>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {hasSB && (["ALL", "SP", "SB"] as const).map((pk) => (
+            <button key={pk} onClick={() => setProduct(pk)} style={{ fontSize: 13, borderRadius: "var(--radius)", padding: "6px 12px", cursor: "pointer", fontWeight: product === pk ? 500 : 400, background: product === pk ? "var(--good-fg)" : "transparent", color: product === pk ? "#fff" : "var(--text-secondary)", border: product === pk ? "none" : "0.5px solid var(--border)" }}>{pk === "ALL" ? "Combined" : pk === "SB" ? "Brands" : "Products"}</button>
+          ))}
           {periods.map(([d, label]) => (
             <button key={d} onClick={() => setWindowDays(d)} style={{ fontSize: 13, borderRadius: "var(--radius)", padding: "6px 12px", cursor: "pointer", fontWeight: windowDays === d ? 500 : 400, background: windowDays === d ? "var(--text-primary)" : "transparent", color: windowDays === d ? "var(--surface-2)" : "var(--text-secondary)", border: windowDays === d ? "none" : "0.5px solid var(--border)" }}>{label}</button>
           ))}
