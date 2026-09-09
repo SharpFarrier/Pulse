@@ -12,7 +12,7 @@ async function getBusinessRows(): Promise<BusinessMonthlyRow[]> {
     for (let from = 0; ; from += size) {
       const { data, error } = await db
         .from("pulse_business_monthly")
-        .select("period, asin, sku, title, ordered_product_sales, units_ordered")
+        .select("period, asin, sku, title, ordered_product_sales, units_ordered, sessions, featured_offer_pct")
         .order("period", { ascending: true })
         .range(from, from + size - 1);
       if (error || !data || data.length === 0) break;
