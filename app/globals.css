@@ -38,3 +38,15 @@ button { font-family: var(--font-sans); cursor: pointer; }
   body { background: #fff; }
   main { max-width: none !important; padding: 0 !important; }
 }
+
+/* ---- Day-by-day (Daily preview) scoped theme — Adi's spec tokens ---- */
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&display=swap');
+.dbd {
+  --bg: #F7F5F0; --card: #FFFFFF; --bd: #E4E0D6; --ink: #1F2420; --muted: #5F625C; --accent: #2E6B4F;
+  --betterbg: #DCEAF7; --betterfg: #1B4F7A; --worsebg: #FBE1CC; --worsefg: #8A3F0A; --spend: #C25E12;
+  --chip-green: #D3EBDD; --chip-amber: #F5DCA4; --chip-red: #B9402F;
+  font-family: 'Instrument Sans', system-ui, sans-serif; font-feature-settings: 'tnum';
+  color: var(--ink); background: var(--bg); margin: -2rem -1.25rem -4rem; padding: 1.5rem 1.25rem 4rem;
+}
+.dbd * { box-sizing: border-box; }
+.dbd-card { background: var(--card); border: 1px solid var(--bd); border-radius: 12px; }
