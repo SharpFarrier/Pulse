@@ -1,135 +1,177 @@
-// Pure listing-trend + drop-diagnosis logic over the monthly Business report.
+// Listing engine, rebuilt around a SELECTED month M vs a baseline, answering
+// "account problem or listing problem, and where did the rupees go?"
 export interface BusinessMonthlyRow {
-  period: string;
-  asin: string;
-  sku: string | null;
-  title: string | null;
-  ordered_product_sales: number;
-  units_ordered: number;
-  sessions: number;
-  featured_offer_pct: number | null;
+  period: string; asin: string; sku: string | null; title: string | null;
+  ordered_product_sales: number; units_ordered: number; sessions: number; featured_offer_pct: number | null;
 }
+export type Mode = "3mo" | "last";
+export type Status = "worse" | "beat" | "inline" | "stopped" | "new" | "tiny";
+export type Tag = "Traffic" | "Conversion" | "Traffic + conversion" | "Price cut" | "Buy box" | "More traffic" | "Better conversion" | "Check data" | "";
 
-export type ListingStatus = "growing" | "steady" | "slipping" | "declining" | "new";
-
-export interface SkuTrend {
-  asin: string; sku: string | null; title: string | null;
-  series: number[]; sessionsSeries: number[]; unitsSeries: number[]; buyboxSeries: (number | null)[];
-  latest: number; prior: number | null; momPct: number | null; recentAvg: number | null;
-  monthsDown: number; latestUnits: number; status: ListingStatus;
-}
-
-export interface ListingData { months: string[]; revenueByMonth: number[]; latestMonth: string | null; skus: SkuTrend[]; attention: SkuTrend[]; }
-
-const SLIP_DROP = 0.15;
-const GROW_RISE = 0.10;
-const mkey = (period: string) => period.slice(0, 7);
+const mkey = (p: string) => p.slice(0, 7);
 const avg = (a: number[]) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
+const pct = (cur: number, base: number) => (base > 0 ? (cur / base - 1) * 100 : null);
+const TINY = 5000;
 
-function statusFor(series: number[]): { status: ListingStatus; monthsDown: number; recentAvg: number | null } {
-  const present = series.filter((v) => v > 0);
-  if (present.length < 2) return { status: "new", monthsDown: 0, recentAvg: present.length ? present[present.length - 1] : null };
-  const latest = present[present.length - 1], prior = present[present.length - 2];
-  let monthsDown = 0;
-  for (let i = present.length - 1; i > 0; i--) { if (present[i] < present[i - 1]) monthsDown++; else break; }
-  const before = present.slice(0, present.length - 1);
-  const window = before.slice(Math.max(0, before.length - 3));
-  const recentAvg = window.length ? avg(window) : null;
-  const belowTrend = recentAvg !== null && recentAvg > 0 && latest < recentAvg * (1 - SLIP_DROP);
-  let status: ListingStatus;
-  if (monthsDown >= 2) status = "declining";
-  else if (belowTrend) status = "slipping";
-  else if (recentAvg !== null && latest > recentAvg * (1 + GROW_RISE)) status = "growing";
-  else if (prior > 0 && latest > prior * (1 + GROW_RISE)) status = "growing";
-  else status = "steady";
-  return { status, monthsDown, recentAvg };
+export interface MetricMove { m: number; base: number; pct: number | null; }
+export interface SkuView {
+  asin: string; sku: string | null; title: string | null; family: string; name: string;
+  revSeries: number[];
+  m: number; baseline: number; change: number; pct: number | null; relative: number | null;
+  status: Status; tag: Tag;
+  sess: MetricMove; conv: MetricMove; price: MetricMove; buybox: { m: number | null; base: number | null; pp: number | null };
+}
+export interface FamilyRow { family: string; m: number; baseline: number; change: number; pct: number | null; relativePts: number | null; expectedM: number; }
+export interface Sibling { base: string; family: string; up: { name: string; change: number }; down: { name: string; change: number }; }
+export interface ListingView {
+  months: string[]; month: string; mode: Mode; baselineMonths: string[];
+  skuCount: number;
+  account: { m: number; baseline: number; pct: number; sentence: string; sessions: MetricMove; conversion: MetricMove; price: MetricMove; revByMonth: number[] };
+  families: FamilyRow[];
+  signals: { siblings: Sibling[]; stopped: { count: number; largest: SkuView | null }; priceMovedTop: number; checkData: number };
+  losers: SkuView[]; gainers: SkuView[];
+  skus: SkuView[]; counts: Record<Status, number>;
 }
 
-export function computeListing(rows: BusinessMonthlyRow[]): ListingData {
-  if (rows.length === 0) return { months: [], revenueByMonth: [], latestMonth: null, skus: [], attention: [] };
-  const months = [...new Set(rows.map((r) => mkey(r.period)))].sort();
-  const idx = new Map(months.map((m, i) => [m, i]));
-  interface Acc { asin: string; sku: string | null; title: string | null; rev: number[]; units: number[]; sess: number[]; bb: (number | null)[]; }
+function familyOf(title: string | null): string {
+  if (!title) return "Other";
+  const m = title.match(/honey\s*touch\s+([A-Za-z]+)/i);
+  return m ? m[1] : "Other";
+}
+function readableName(title: string | null, sku: string | null): string {
+  if (!title) return sku ?? "—";
+  const t = title.replace(/^honey\s*touch\s+/i, "").split("|")[0].trim();
+  return t.length > 48 ? t.slice(0, 47) + "…" : t;
+}
+function skuBase(sku: string | null): string | null { if (!sku) return null; const p = sku.split("-"); return p.length > 1 ? p.slice(0, -1).join("-") : sku; }
+
+function diagnose(sess: MetricMove, conv: MetricMove, price: MetricMove, buyboxPp: number | null, gaining: boolean): Tag {
+  const s = sess.pct, c = conv.pct, p = price.pct;
+  if ((s !== null && s <= -35 && c !== null && c >= 40) || (c !== null && c <= -35 && s !== null && s >= 40)) return "Check data";
+  if (gaining) {
+    if (s !== null && s >= 15) return "More traffic";
+    if (c !== null && c >= 15) return "Better conversion";
+    return "";
+  }
+  if (s !== null && s <= -15 && c !== null && c <= -15) return "Traffic + conversion";
+  if (s !== null && s <= -20 && (c === null || c > -10)) return "Traffic";
+  if (c !== null && c <= -20 && (s === null || s > -10)) return "Conversion";
+  if (p !== null && p <= -10) return "Price cut";
+  if (buyboxPp !== null && buyboxPp <= -5) return "Buy box";
+  return "";
+}
+
+export function listMonths(rows: BusinessMonthlyRow[]): string[] { return [...new Set(rows.map(r => mkey(r.period)))].sort(); }
+
+export function computeListingView(rows: BusinessMonthlyRow[], month?: string, mode: Mode = "3mo"): ListingView | null {
+  if (rows.length === 0) return null;
+  const months = listMonths(rows);
+  const M = month && months.includes(month) ? month : months[months.length - 1];
+  const mi = months.indexOf(M);
+  const baseIdx = mode === "last" ? (mi >= 1 ? [mi - 1] : []) : months.slice(Math.max(0, mi - 3), mi).map((_, k) => Math.max(0, mi - 3) + k);
+  const baselineMonths = baseIdx.map(i => months[i]);
+
+  // per ASIN series
+  interface Acc { asin: string; sku: string | null; title: string | null; rev: number[]; sess: number[]; units: number[]; bb: (number | null)[]; }
   const byAsin = new Map<string, Acc>();
+  const idx = new Map(months.map((m, i) => [m, i]));
   for (const r of rows) {
     let a = byAsin.get(r.asin);
-    if (!a) { a = { asin: r.asin, sku: r.sku, title: r.title, rev: Array(months.length).fill(0), units: Array(months.length).fill(0), sess: Array(months.length).fill(0), bb: Array(months.length).fill(null) }; byAsin.set(r.asin, a); }
+    if (!a) { a = { asin: r.asin, sku: r.sku, title: r.title, rev: Array(months.length).fill(0), sess: Array(months.length).fill(0), units: Array(months.length).fill(0), bb: Array(months.length).fill(null) }; byAsin.set(r.asin, a); }
     const i = idx.get(mkey(r.period))!;
-    a.rev[i] += r.ordered_product_sales || 0;
-    a.units[i] += r.units_ordered || 0;
-    a.sess[i] += r.sessions || 0;
-    a.bb[i] = r.featured_offer_pct;
-    if (!a.sku && r.sku) a.sku = r.sku;
-    if (!a.title && r.title) a.title = r.title;
+    a.rev[i] += r.ordered_product_sales || 0; a.sess[i] += r.sessions || 0; a.units[i] += r.units_ordered || 0; a.bb[i] = r.featured_offer_pct;
+    if (!a.sku && r.sku) a.sku = r.sku; if (!a.title && r.title) a.title = r.title;
   }
-  const revenueByMonth = Array(months.length).fill(0);
-  const skus: SkuTrend[] = [...byAsin.values()].map((a) => {
-    a.rev.forEach((v, i) => (revenueByMonth[i] += v));
-    const { status, monthsDown, recentAvg } = statusFor(a.rev);
-    const present = a.rev.filter((v) => v > 0);
-    const latest = present.length ? present[present.length - 1] : 0;
-    const prior = present.length >= 2 ? present[present.length - 2] : null;
-    const momPct = prior && prior > 0 ? ((latest - prior) / prior) * 100 : null;
-    let latestUnits = 0;
-    for (let i = a.rev.length - 1; i >= 0; i--) { if (a.rev[i] > 0) { latestUnits = a.units[i]; break; } }
-    return { asin: a.asin, sku: a.sku, title: a.title, series: a.rev, sessionsSeries: a.sess, unitsSeries: a.units, buyboxSeries: a.bb, latest, prior, momPct, recentAvg, monthsDown, latestUnits, status };
-  }).sort((x, y) => y.latest - x.latest);
-  const rank: Record<ListingStatus, number> = { declining: 0, slipping: 1, steady: 2, growing: 3, new: 4 };
-  const attention = skus.filter((s) => s.status === "slipping" || s.status === "declining").sort((a, b) => (rank[a.status] - rank[b.status]) || (b.latest - a.latest));
-  return { months, revenueByMonth, latestMonth: months[months.length - 1] ?? null, skus, attention };
-}
 
-export interface Driver { baseline: number | null; latest: number; pct: number | null; series: number[]; }
-export type VerdictKind = "traffic" | "conversion" | "price" | "buybox" | "healthy" | "insufficient";
-export interface Diagnosis {
-  revPct: number | null; dropping: boolean;
-  drivers: { sessions: Driver; conversion: Driver; price: Driver; buybox: Driver };
-  primary: "sessions" | "conversion" | "price" | "buybox" | null;
-  kind: VerdictKind; verdict: string;
-}
-const pctc = (latest: number, base: number | null) => (base && base > 0 ? ((latest - base) / base) * 100 : null);
+  const baseAvg = (arr: number[]) => avg(baseIdx.map(i => arr[i]));
+  const skus: SkuView[] = [...byAsin.values()].map(a => {
+    const m = a.rev[mi], baseline = baseAvg(a.rev);
+    const sessM = a.sess[mi], sessB = baseAvg(a.sess), unitsM = a.units[mi], unitsB = baseAvg(a.units);
+    const convM = sessM > 0 ? unitsM / sessM * 100 : 0, convB = sessB > 0 ? unitsB / sessB * 100 : 0;
+    const priceM = unitsM > 0 ? m / unitsM : 0, priceB = unitsB > 0 ? baseline / unitsB : 0;
+    const bbVals = baseIdx.map(i => a.bb[i]).filter((v): v is number => v !== null);
+    const bbB = bbVals.length ? avg(bbVals) : null, bbM = a.bb[mi];
+    const sess = { m: sessM, base: sessB, pct: pct(sessM, sessB) };
+    const conv = { m: convM, base: convB, pct: pct(convM, convB) };
+    const price = { m: priceM, base: priceB, pct: pct(priceM, priceB) };
+    const buyboxPp = bbB !== null && bbM !== null ? bbM - bbB : null;
+    const change = m - baseline, pctv = pct(m, baseline);
+    const gaining = pctv !== null && pctv > 0;
+    let status: Status;
+    if (m === 0 && baseline > 0) status = "stopped";
+    else if (baseline === 0 && m > 0) status = "new";
+    else if (m < TINY && baseline < TINY) status = "tiny";
+    else status = "inline"; // relative computed after account
+    const tag: Tag = status === "stopped" ? "" : diagnose(sess, conv, price, buyboxPp, gaining);
+    return { asin: a.asin, sku: a.sku, title: a.title, family: familyOf(a.title), name: readableName(a.title, a.sku), revSeries: a.rev, m, baseline, change, pct: pctv, relative: null, status, tag, sess, conv, price, buybox: { m: bbM, base: bbB, pp: buyboxPp } };
+  });
 
-export function diagnose(s: SkuTrend): Diagnosis {
-  const presentIdx = s.series.map((v, i) => (v > 0 ? i : -1)).filter((i) => i >= 0);
-  const empty: Driver = { baseline: null, latest: 0, pct: null, series: [] };
-  if (presentIdx.length < 2) return { revPct: null, dropping: false, drivers: { sessions: empty, conversion: empty, price: empty, buybox: empty }, primary: null, kind: "insufficient", verdict: "Not enough history yet — needs at least two months to compare." };
-  const li = presentIdx[presentIdx.length - 1];
-  const baseIdx = presentIdx.slice(0, presentIdx.length - 1).slice(-3);
-  const baseRev = avg(baseIdx.map((i) => s.series[i]));
-  const baseSess = avg(baseIdx.map((i) => s.sessionsSeries[i]));
-  const baseUnits = avg(baseIdx.map((i) => s.unitsSeries[i]));
-  const baseBBvals = baseIdx.map((i) => s.buyboxSeries[i]).filter((v): v is number => v !== null);
-  const baseBB = baseBBvals.length ? avg(baseBBvals) : null;
-  const latRev = s.series[li], latSess = s.sessionsSeries[li], latUnits = s.unitsSeries[li], latBB = s.buyboxSeries[li];
-  const cvrLat = latSess > 0 ? (latUnits / latSess) * 100 : 0;
-  const cvrBase = baseSess > 0 ? (baseUnits / baseSess) * 100 : null;
-  const priceLat = latUnits > 0 ? latRev / latUnits : 0;
-  const priceBase = baseUnits > 0 ? baseRev / baseUnits : null;
-  const drivers = {
-    sessions:   { baseline: baseSess || null, latest: latSess, pct: pctc(latSess, baseSess), series: s.sessionsSeries },
-    conversion: { baseline: cvrBase, latest: cvrLat, pct: pctc(cvrLat, cvrBase), series: s.sessionsSeries.map((se, i) => (se > 0 ? (s.unitsSeries[i] / se) * 100 : 0)) },
-    price:      { baseline: priceBase, latest: priceLat, pct: pctc(priceLat, priceBase), series: s.series.map((r, i) => (s.unitsSeries[i] > 0 ? r / s.unitsSeries[i] : 0)) },
-    buybox:     { baseline: baseBB, latest: latBB ?? 0, pct: baseBB ? (latBB ?? 0) - baseBB : null, series: s.buyboxSeries.map((v) => v ?? 0) },
-  };
-  const revPct = pctc(latRev, baseRev);
-  const dropping = revPct !== null && revPct < -5;
-  const cand: [Diagnosis["primary"], number][] = [["sessions", drivers.sessions.pct ?? 0], ["conversion", drivers.conversion.pct ?? 0], ["price", drivers.price.pct ?? 0]];
-  cand.sort((a, b) => a[1] - b[1]);
-  const primary = cand[0][0];
-  const bbDrop = drivers.buybox.pct !== null && drivers.buybox.pct <= -5;
-  const f = (n: number | null) => (n === null ? "—" : `${Math.abs(n).toFixed(0)}%`);
-  let kind: VerdictKind, verdict: string;
-  if (!dropping) {
-    kind = "healthy";
-    verdict = revPct !== null && revPct > 5 ? "Growing — revenue above its recent run, led by " + (primary === "sessions" ? "more traffic." : primary === "conversion" ? "better conversion." : "higher price.") : "Holding — revenue within its recent range; nothing dragging.";
-  } else if (bbDrop && (drivers.conversion.pct ?? 0) < -5) {
-    kind = "buybox"; verdict = `Buy-box loss — featured-offer share dropped ${Math.abs(drivers.buybox.pct!).toFixed(0)}pp and conversion fell with it. Check your price against other sellers on the listing.`;
-  } else if (primary === "sessions") {
-    kind = "traffic"; verdict = `Traffic problem — sessions down ${f(drivers.sessions.pct)} while conversion and price held. Look at ranking, ad support, or category demand, not the listing.`;
-  } else if (primary === "conversion") {
-    kind = "conversion"; verdict = `Conversion problem — traffic held but ${f(drivers.conversion.pct)} fewer visits convert. Check price, reviews, content, or competition.`;
-  } else {
-    kind = "price"; verdict = `Lower selling price — revenue per unit down ${f(drivers.price.pct)} (discounting or a mix shift), even as traffic held.`;
+  // account
+  const accM = skus.reduce((s, k) => s + k.m, 0);
+  const accBase = skus.reduce((s, k) => s + k.baseline, 0);
+  const accPct = accBase > 0 ? (accM / accBase - 1) * 100 : 0;
+  // relative + final status
+  for (const k of skus) {
+    if (k.status === "stopped" || k.status === "new" || k.status === "tiny") continue;
+    k.relative = k.pct !== null ? k.pct - accPct : null;
+    k.status = k.relative === null ? "inline" : k.relative < -15 ? "worse" : k.relative > 15 ? "beat" : "inline";
   }
-  return { revPct, dropping, drivers, primary, kind, verdict };
+
+  // account driver tiles (from SKUs with sessions data)
+  const withSess = skus.filter(k => k.sess.base > 0 || k.sess.m > 0);
+  const sM = withSess.reduce((s, k) => s + k.sess.m, 0), sB = withSess.reduce((s, k) => s + k.sess.base, 0);
+  const uM = withSess.reduce((s, k) => s + (k.m > 0 && k.price.m > 0 ? k.m / k.price.m : 0), 0);
+  const uB = withSess.reduce((s, k) => s + (k.baseline > 0 && k.price.base > 0 ? k.baseline / k.price.base : 0), 0);
+  const convAccM = sM > 0 ? uM / sM * 100 : 0, convAccB = sB > 0 ? uB / sB * 100 : 0;
+  const priceAccM = uM > 0 ? accM / uM : 0, priceAccB = uB > 0 ? accBase / uB : 0;
+  const revByMonth = months.map((_, i) => skus.reduce((s, k) => s + k.revSeries[i], 0));
+
+  // families
+  const famMap = new Map<string, { m: number; baseline: number }>();
+  for (const k of skus) { const f = famMap.get(k.family) ?? { m: 0, baseline: 0 }; f.m += k.m; f.baseline += k.baseline; famMap.set(k.family, f); }
+  let families: FamilyRow[] = [...famMap.entries()].map(([family, v]) => ({ family, m: v.m, baseline: v.baseline, change: v.m - v.baseline, pct: pct(v.m, v.baseline), relativePts: pct(v.m, v.baseline) !== null ? pct(v.m, v.baseline)! - accPct : null, expectedM: v.baseline * (1 + accPct / 100) }));
+  families.sort((a, b) => a.change - b.change);
+  // keep top 8 by |change|, group rest as "Other"
+  const bySize = [...families].sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
+  const keep = new Set(bySize.slice(0, 8).map(f => f.family));
+  const grouped = families.filter(f => keep.has(f.family));
+  const rest = families.filter(f => !keep.has(f.family));
+  if (rest.length) { const r = rest.reduce((a, f) => ({ m: a.m + f.m, baseline: a.baseline + f.baseline }), { m: 0, baseline: 0 }); grouped.push({ family: `${rest.length} others`, m: r.m, baseline: r.baseline, change: r.m - r.baseline, pct: pct(r.m, r.baseline), relativePts: pct(r.m, r.baseline) !== null ? pct(r.m, r.baseline)! - accPct : null, expectedM: r.baseline * (1 + accPct / 100) }); }
+  families = grouped.sort((a, b) => a.change - b.change);
+
+  // signals
+  const baseGroups = new Map<string, SkuView[]>();
+  for (const k of skus) { const b = skuBase(k.sku); if (!b) continue; const key = k.family + "|" + b; const g = baseGroups.get(key) ?? []; g.push(k); baseGroups.set(key, g); }
+  const siblings: Sibling[] = [];
+  for (const [key, g] of baseGroups) {
+    if (g.length < 2) continue;
+    const up = g.filter(k => k.change >= 1e5).sort((a, b) => b.change - a.change)[0];
+    const down = g.filter(k => k.change <= -1e5).sort((a, b) => a.change - b.change)[0];
+    if (up && down) siblings.push({ base: key.split("|")[1], family: g[0].family, up: { name: up.name, change: up.change }, down: { name: down.name, change: down.change } });
+  }
+  const stoppedList = skus.filter(k => k.status === "stopped").sort((a, b) => b.baseline - a.baseline);
+  const topSkus = [...skus].sort((a, b) => b.baseline - a.baseline).slice(0, 12);
+  const priceMovedTop = topSkus.filter(k => k.price.pct !== null && Math.abs(k.price.pct) >= 5).length;
+  const checkData = skus.filter(k => k.tag === "Check data").length;
+
+  // movers (exclude stopped/new/tiny for gainers/losers by rupee change, but stopped are big losers — keep them)
+  const sorted = [...skus].sort((a, b) => a.change - b.change);
+  const losers = sorted.filter(k => k.change < 0).slice(0, 8);
+  const gainers = [...sorted].reverse().filter(k => k.change > 0).slice(0, 5);
+
+  const counts: Record<Status, number> = { worse: 0, beat: 0, inline: 0, stopped: 0, new: 0, tiny: 0 };
+  for (const k of skus) counts[k.status]++;
+
+  // account sentence
+  const worstFam = families[0];
+  const dropShare = worstFam && accM - accBase < 0 ? worstFam.change / (accM - accBase) : 0;
+  const downFams = families.filter(f => (f.pct ?? 0) < -5).length;
+  let sentence: string;
+  if (accPct >= -5) sentence = "Revenue held broadly in line with its usual run.";
+  else if (dropShare > 0.5) sentence = `This is concentrated: ${worstFam.family} alone accounts for about ${Math.round(dropShare * 100)}% of the fall.`;
+  else sentence = `This is account-wide — ${downFams} of your families fell together, so it's more likely a demand/listing shift than any one product.`;
+
+  const account = { m: accM, baseline: accBase, pct: accPct, sentence, sessions: { m: sM, base: sB, pct: pct(sM, sB) }, conversion: { m: convAccM, base: convAccB, pct: pct(convAccM, convAccB) }, price: { m: priceAccM, base: priceAccB, pct: pct(priceAccM, priceAccB) }, revByMonth };
+
+  return { months, month: M, mode, baselineMonths, skuCount: skus.filter(k => k.m > 0).length, account, families, signals: { siblings, stopped: { count: stoppedList.length, largest: stoppedList[0] ?? null }, priceMovedTop, checkData }, losers, gainers, skus, counts };
 }

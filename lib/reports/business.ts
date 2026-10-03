@@ -95,12 +95,15 @@ export function parseBusinessReport(buf: ArrayBuffer | Uint8Array | Buffer, file
   for (const r of rows) {
     const ex = byAsin.get(r.asin);
     if (!ex) { byAsin.set(r.asin, { ...r }); continue; }
-    ex.sessions += r.sessions;
-    ex.page_views += r.page_views;
+    // Sessions / page-views / buy-box are reported at the ASIN level — identical
+    // across the SKU rows of one ASIN — so take them ONCE (not sum) or we double-count.
+    ex.sessions = Math.max(ex.sessions, r.sessions);
+    ex.page_views = Math.max(ex.page_views, r.page_views);
+    if (r.featured_offer_pct !== null) ex.featured_offer_pct = Math.max(ex.featured_offer_pct ?? 0, r.featured_offer_pct);
+    // Units / sales / order-items are per-SKU — sum them for the ASIN total.
     ex.units_ordered += r.units_ordered;
     ex.ordered_product_sales += r.ordered_product_sales;
     ex.total_order_items += r.total_order_items;
-    if (ex.featured_offer_pct === null) ex.featured_offer_pct = r.featured_offer_pct;
     if (!ex.sku && r.sku) ex.sku = r.sku;
     if (!ex.title && r.title) ex.title = r.title;
   }

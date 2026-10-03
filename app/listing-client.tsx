@@ -1,171 +1,235 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { computeListing, diagnose, type BusinessMonthlyRow, type SkuTrend, type ListingStatus, type Driver, type Diagnosis } from "@/lib/reports/listing";
+import { computeListingView, type BusinessMonthlyRow, type SkuView, type Status, type Mode, type MetricMove } from "@/lib/reports/listing";
 
-const CELL = { green: "#4FC79E", amber: "#F0A93A", red: "#E8615F", gray: "#C9CFCB" };
-const BADGE: Record<ListingStatus, { bg: string; fg: string; label: string }> = {
-  growing: { bg: "var(--good-bg)", fg: "var(--good-fg)", label: "Growing" },
-  steady: { bg: "var(--surface-1)", fg: "var(--text-secondary)", label: "Steady" },
-  slipping: { bg: "var(--okay-bg)", fg: "var(--okay-fg)", label: "Slipping" },
-  declining: { bg: "var(--pause-bg)", fg: "var(--pause-fg)", label: "Declining" },
-  new: { bg: "var(--surface-1)", fg: "var(--text-muted)", label: "New" },
-};
-const inr = (n: number) => n >= 1e7 ? `₹${(n / 1e7).toFixed(2)}Cr` : n >= 1e5 ? `₹${(n / 1e5).toFixed(2)}L` : n >= 1e3 ? `₹${Math.round(n / 1e3)}k` : `₹${Math.round(n)}`;
-const int = (n: number) => Math.round(n).toLocaleString("en-IN");
-const rupee = (n: number) => `₹${Math.round(n).toLocaleString("en-IN")}`;
-const mLabel = (m: string) => new Date(m + "-01T00:00:00Z").toLocaleDateString("en-IN", { month: "short", timeZone: "UTC" });
-const shortTitle = (t: string | null, sku: string | null) => { const s = (t ?? sku ?? "—"); return s.length > 46 ? s.slice(0, 45) + "…" : s; };
+const inr = (n: number) => { const a = Math.abs(n); const s = n < 0 ? "−" : ""; return a >= 1e7 ? `${s}₹${(a / 1e7).toFixed(2)}Cr` : a >= 1e5 ? `${s}₹${(a / 1e5).toFixed(2)}L` : a >= 1e3 ? `${s}₹${(a / 1e3).toFixed(1)}k` : `${s}₹${Math.round(a)}`; };
+const mLabel = (m: string) => new Date(m + "-01T00:00:00Z").toLocaleDateString("en-IN", { month: "short", year: "2-digit", timeZone: "UTC" });
+const mFull = (m: string) => new Date(m + "-01T00:00:00Z").toLocaleDateString("en-IN", { month: "long", year: "numeric", timeZone: "UTC" });
+const TAG_PURPLE = "Check data";
+const STATUS_LABEL: Record<Status, string> = { worse: "Worse than account", beat: "Beat account", inline: "In line", stopped: "Stopped selling", new: "New", tiny: "Tiny" };
 
-function bars(series: number[], colorFn: (i: number) => string, h = 22) {
+function pctStr(p: number | null, pp = false) { return p === null ? "—" : `${p >= 0 ? "+" : ""}${p.toFixed(0)}${pp ? "pp" : "%"}`; }
+function moveColor(p: number | null, goodUp = true) { if (p === null || Math.abs(p) < 1) return "var(--muted)"; const worse = goodUp ? p < 0 : p > 0; return worse ? "var(--worsefg)" : "var(--betterfg)"; }
+
+function Spark({ series, mi, gain }: { series: number[]; mi: number; gain: boolean }) {
   const max = Math.max(1, ...series);
-  return <span style={{ display: "flex", gap: 2, alignItems: "flex-end", height: h, justifyContent: "center" }}>
-    {series.map((v, i) => <span key={i} style={{ width: 5, height: `${Math.max(v > 0 ? 3 : 0, (v / max) * h)}px`, background: colorFn(i), borderRadius: 1 }} />)}
+  return <span style={{ display: "flex", gap: 2, alignItems: "flex-end", height: 24 }}>
+    {series.map((v, i) => <span key={i} style={{ width: 5, height: `${Math.max(v > 0 ? 3 : 0, (v / max) * 24)}px`, background: i === mi ? (gain ? "#5B93C7" : "#E58B45") : "#B9B4A6", borderRadius: 1 }} />)}
   </span>;
 }
-function Spark({ s }: { s: SkuTrend }) {
-  const color = (i: number) => {
-    if (s.series[i] === 0) return "transparent";
-    const last = i === s.series.length - 1, second = i === s.series.length - 2;
-    if (s.status === "growing") return CELL.green;
-    if (s.status === "declining") return last ? CELL.red : second ? CELL.amber : CELL.gray;
-    if (s.status === "slipping") return last ? CELL.amber : CELL.gray;
-    return CELL.gray;
-  };
-  return bars(s.series, color);
-}
 
-function Delta({ pct, unit }: { pct: number | null; unit: "pct" | "pp" }) {
-  if (pct === null) return <span style={{ color: "var(--text-muted)" }}>—</span>;
-  const up = pct > 0.5, down = pct < -0.5;
-  const color = down ? "var(--pause-fg)" : up ? "var(--good-fg)" : "var(--text-muted)";
-  const v = unit === "pp" ? `${Math.abs(pct).toFixed(0)}pp` : `${Math.abs(pct).toFixed(0)}%`;
-  return <span style={{ color }}>{down ? "▼" : up ? "▲" : "▬"} {v}</span>;
-}
-
-function DriverRow({ label, d, fmt, unit, primary }: { label: string; d: Driver; fmt: (n: number) => string; unit: "pct" | "pp"; primary: boolean }) {
+function Move({ label, mm, fmt, main, goodUp = true }: { label: string; mm: MetricMove; fmt: (n: number) => string; main?: boolean; goodUp?: boolean }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 0.9fr 1fr", gap: 8, padding: "9px 12px", borderTop: "0.5px solid var(--border)", fontSize: 12, alignItems: "center", background: primary ? "var(--pause-bg)" : "transparent" }}>
-      <span style={{ color: "var(--text-primary)", fontWeight: primary ? 500 : 400 }}>{label}{primary && <span style={{ fontSize: 10, color: "var(--pause-fg)" }}> ← culprit</span>}</span>
-      <span style={{ textAlign: "right", color: "var(--text-secondary)" }}>{d.baseline === null ? "—" : fmt(d.baseline)}</span>
-      <span style={{ textAlign: "right" }}>{fmt(d.latest)}</span>
-      <span style={{ textAlign: "right" }}><Delta pct={d.pct} unit={unit} /></span>
-      <span style={{ justifySelf: "end" }}>{bars(d.series.map((v) => (v > 0 ? v : 0)), () => CELL.gray, 16)}</span>
+    <div className="dbd-card" style={{ padding: "12px 14px", position: "relative", borderColor: main ? "var(--spend)" : "var(--bd)", borderWidth: main ? 2 : 1 }}>
+      {main && <span style={{ position: "absolute", top: -9, left: 12, fontSize: 9, fontWeight: 700, background: "var(--spend)", color: "#fff", borderRadius: 4, padding: "2px 6px" }}>MAIN CAUSE</span>}
+      <div style={{ fontSize: 12, color: "var(--muted)" }}>{label}</div>
+      <div style={{ fontSize: 19, fontWeight: 600, margin: "2px 0" }}>{fmt(mm.m)} <span style={{ fontSize: 13, fontWeight: 600, color: moveColor(mm.pct, goodUp) }}>{pctStr(mm.pct)}</span></div>
+      <div style={{ fontSize: 11, color: "var(--muted)" }}>usual {fmt(mm.base)}</div>
     </div>
   );
 }
 
-function DiagnosisPanel({ s }: { s: SkuTrend }) {
-  const dg: Diagnosis = useMemo(() => diagnose(s), [s]);
-  const bannerBg = dg.dropping ? "var(--pause-bg)" : dg.kind === "healthy" && dg.revPct !== null && dg.revPct > 5 ? "var(--good-bg)" : "var(--surface-1)";
-  const bannerFg = dg.dropping ? "#7A2222" : dg.kind === "healthy" && dg.revPct !== null && dg.revPct > 5 ? "var(--good-fg)" : "var(--text-secondary)";
-  const revLabel = dg.revPct === null ? "vs 3-mo baseline" : `revenue ${dg.revPct >= 0 ? "up" : "down"} ${Math.abs(dg.revPct).toFixed(0)}% vs its 3-mo baseline`;
-  return (
-    <div style={{ padding: "12px 16px 16px 34px", background: "var(--surface-1)", borderTop: "0.5px solid var(--border)" }}>
-      <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 10 }}>Why · {revLabel}</div>
-      <div style={{ fontSize: 13, color: bannerFg, background: bannerBg, borderRadius: "var(--radius)", padding: "10px 12px", marginBottom: 14, lineHeight: 1.5 }}>{dg.verdict}</div>
-      {dg.kind !== "insufficient" && (
-        <>
-          <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 6 }}>What moved (latest vs 3-mo avg)</div>
-          <div style={{ border: "0.5px solid var(--border)", borderRadius: 10, overflow: "hidden", background: "var(--surface-2)" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 0.9fr 1fr", gap: 8, padding: "7px 12px", background: "var(--surface-1)", fontSize: 11, color: "var(--text-muted)" }}>
-              <span>Driver</span><span style={{ textAlign: "right" }}>Baseline</span><span style={{ textAlign: "right" }}>Latest</span><span style={{ textAlign: "right" }}>Δ</span><span style={{ textAlign: "right" }}>trend</span>
-            </div>
-            <DriverRow label="Sessions" d={dg.drivers.sessions} fmt={(n) => int(n)} unit="pct" primary={dg.dropping && dg.primary === "sessions"} />
-            <DriverRow label="Conversion" d={dg.drivers.conversion} fmt={(n) => n.toFixed(2) + "%"} unit="pct" primary={dg.dropping && (dg.primary === "conversion" || dg.kind === "buybox")} />
-            <DriverRow label="Avg price" d={dg.drivers.price} fmt={(n) => rupee(n)} unit="pct" primary={dg.dropping && dg.primary === "price"} />
-            <DriverRow label="Buy-box" d={dg.drivers.buybox} fmt={(n) => n.toFixed(0) + "%"} unit="pp" primary={dg.kind === "buybox"} />
-          </div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 10 }}>Revenue ≈ sessions × conversion × price. Baseline is this SKU&apos;s own average of up to 3 months before the latest.</div>
-        </>
-      )}
-    </div>
-  );
+function tagStyle(tag: string): React.CSSProperties {
+  if (!tag) return { display: "none" };
+  const purple = tag === TAG_PURPLE, gain = tag === "More traffic" || tag === "Better conversion";
+  const bg = purple ? "#ECE6F5" : gain ? "var(--betterbg)" : "var(--worsebg)";
+  const fg = purple ? "#4B2F7A" : gain ? "var(--betterfg)" : "var(--worsefg)";
+  return { fontSize: 11, background: bg, color: fg, borderRadius: 5, padding: "1px 7px", whiteSpace: "nowrap" };
 }
 
 export default function ListingClient({ rows }: { rows: BusinessMonthlyRow[] }) {
-  const d = useMemo(() => computeListing(rows), [rows]);
-  const [showAll, setShowAll] = useState(false);
-  const [open, setOpen] = useState<string | null>(null);
+  const months = useMemo(() => [...new Set(rows.map(r => r.period.slice(0, 7)))].sort(), [rows]);
+  const [month, setMonth] = useState<string | undefined>(undefined);
+  const [mode, setMode] = useState<Mode>("3mo");
+  const [filter, setFilter] = useState<Status | "all">("all");
+  const [openFam, setOpenFam] = useState<Set<string>>(new Set());
+  const [openSku, setOpenSku] = useState<string | null>(null);
+  const v = useMemo(() => computeListingView(rows, month, mode), [rows, month, mode]);
 
-  if (rows.length === 0) {
-    return <div><div style={{ fontSize: 20, fontWeight: 500 }}>Listing · sales trend</div>
-      <div style={{ marginTop: 16, padding: "2rem", border: "0.5px solid var(--border)", borderRadius: 12, textAlign: "center", color: "var(--text-muted)", fontSize: 14 }}>No business data yet. Ingest a Business report (Ingest → Business report), then come back.</div></div>;
-  }
+  if (!v) return <div className="dbd"><div style={{ fontSize: 20, fontWeight: 600 }}>Listing</div><div style={{ marginTop: 16, color: "var(--muted)" }}>No business data yet — ingest a Business report first.</div></div>;
 
-  const revMax = Math.max(1, ...d.revenueByMonth);
-  const oneMonth = d.months.length < 2;
-  const visible = showAll ? d.skus : d.skus.slice(0, 20);
+  const mi = v.months.indexOf(v.month);
+  const accDown = v.account.pct < 0;
+  const baseMax = Math.max(1, ...v.account.revByMonth);
+  const baseLineY = v.account.baseline; // avg baseline revenue (dashed line)
+  const famMaxAbs = Math.max(1, ...v.families.map(f => Math.abs(f.change)));
+  const sessMain = Math.abs(v.account.sessions.pct ?? 0) >= Math.abs(v.account.conversion.pct ?? 0) && Math.abs(v.account.sessions.pct ?? 0) >= Math.abs(v.account.price.pct ?? 0);
+
+  const filtered = filter === "all" ? v.skus : v.skus.filter(s => s.status === filter);
+  const byFamily = useMemo(() => {
+    const m = new Map<string, SkuView[]>();
+    for (const s of filtered) { const g = m.get(s.family) ?? []; g.push(s); m.set(s.family, g); }
+    for (const g of m.values()) g.sort((a, b) => a.change - b.change);
+    return [...m.entries()].sort((a, b) => a[1].reduce((s, k) => s + k.change, 0) - b[1].reduce((s, k) => s + k.change, 0));
+  }, [filtered]);
+
+  const MoverRow = ({ s }: { s: SkuView }) => (
+    <div className="dbd-card" style={{ padding: "10px 12px", marginBottom: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start" }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</div>
+          <div style={{ fontSize: 11, color: "var(--muted)" }}>{inr(s.baseline)} → {inr(s.m)}{s.tag ? " · " : ""}<span style={tagStyle(s.tag)}>{s.tag}</span></div>
+        </div>
+        <div style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: s.change < 0 ? "var(--worsefg)" : "var(--betterfg)" }}>{inr(s.change)}</div>
+          <Spark series={s.revSeries} mi={mi} gain={s.change >= 0} />
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 12, fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+        <span>sessions <b style={{ color: moveColor(s.sess.pct) }}>{pctStr(s.sess.pct)}</b></span>
+        <span>conv <b style={{ color: moveColor(s.conv.pct) }}>{pctStr(s.conv.pct)}</b></span>
+        <span>price <b style={{ color: moveColor(s.price.pct, false) }}>{pctStr(s.price.pct)}</b></span>
+      </div>
+    </div>
+  );
 
   return (
-    <div style={{ maxWidth: 860, margin: "0 auto" }}>
-      <div style={{ marginBottom: "1.25rem" }}>
-        <div style={{ fontSize: 20, fontWeight: 500 }}>Listing · sales trend</div>
-        <div style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 2 }}>Honey Touch · Amazon · Business report · {d.months.length} month{d.months.length > 1 ? "s" : ""} loaded</div>
+    <div className="dbd">
+      {/* 1. header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10, marginBottom: 16 }}>
+        <div>
+          <div style={{ fontSize: 20, fontWeight: 600 }}>Listing</div>
+          <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 2 }}>Business report · {mFull(v.month)} · {v.skuCount} SKUs</div>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <select value={v.month} onChange={e => setMonth(e.target.value)} style={{ fontSize: 13, padding: "6px 10px", borderRadius: 7, border: "1px solid var(--bd)", background: "var(--card)", fontFamily: "inherit" }}>
+            {v.months.map(m => <option key={m} value={m}>{mFull(m)}</option>)}
+          </select>
+          <div style={{ display: "inline-flex", gap: 3, background: "var(--bd)", borderRadius: 7, padding: 2 }}>
+            {(["3mo", "last"] as Mode[]).map(k => <button key={k} onClick={() => setMode(k)} style={{ fontSize: 12, fontWeight: mode === k ? 600 : 400, border: "none", borderRadius: 5, padding: "5px 10px", cursor: "pointer", background: mode === k ? "var(--card)" : "transparent", color: "var(--ink)" }}>{k === "3mo" ? "vs 3-mo avg" : "vs last month"}</button>)}
+          </div>
+        </div>
       </div>
 
-      <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 10 }}>Total revenue by month</div>
-      <div style={{ display: "flex", alignItems: "flex-end", gap: 12, height: 120, marginBottom: 6, padding: "0 2px" }}>
-        {d.revenueByMonth.map((v, i) => {
-          const last = i === d.revenueByMonth.length - 1;
-          const up = i > 0 ? v >= d.revenueByMonth[i - 1] : true;
-          return <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%" }}>
-            <span style={{ fontSize: 10, color: "var(--text-muted)", marginBottom: 3 }}>{inr(v)}</span>
-            <div style={{ width: "100%", maxWidth: 42, height: `${Math.max(4, (v / revMax) * 92)}px`, background: last ? (up ? CELL.green : CELL.amber) : "#BFD9CF", borderRadius: "4px 4px 0 0" }} />
+      {/* 2. account panel */}
+      <div className="dbd-card" style={{ padding: "16px 18px", marginBottom: 20 }}>
+        <div style={{ fontSize: 18, fontWeight: 600 }}>{inr(v.account.m)} in {mLabel(v.month)} — {accDown ? `${Math.abs(v.account.pct).toFixed(0)}% below` : `${v.account.pct.toFixed(0)}% above`} the usual {inr(v.account.baseline)}</div>
+        <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 4, marginBottom: 14 }}>{v.account.sentence}</div>
+        <div style={{ position: "relative", display: "flex", alignItems: "flex-end", gap: 10, height: 90, marginBottom: 6 }}>
+          <div style={{ position: "absolute", left: 0, right: 0, bottom: `${(baseLineY / baseMax) * 78}px`, borderTop: "1px dashed var(--muted)", opacity: 0.5 }} />
+          {v.account.revByMonth.map((r, i) => {
+            const isM = i === mi, isBase = v.baselineMonths.includes(v.months[i]);
+            return <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%", zIndex: 1 }}>
+              <span style={{ fontSize: 9, color: "var(--muted)", marginBottom: 2 }}>{inr(r)}</span>
+              <div style={{ width: "100%", maxWidth: 42, height: `${Math.max(3, (r / baseMax) * 78)}px`, background: isM ? "var(--spend)" : isBase ? "#8C8777" : "#CFCABA", borderRadius: "3px 3px 0 0" }} />
+            </div>;
+          })}
+        </div>
+        <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>{v.months.map(m => <span key={m} style={{ flex: 1, textAlign: "center", fontSize: 10, color: m === v.month ? "var(--ink)" : "var(--muted)", fontWeight: m === v.month ? 600 : 400 }}>{mLabel(m)}</span>)}</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+          <Move label="Sessions" mm={v.account.sessions} fmt={(n) => (n / 1e5).toFixed(2) + "L"} main={sessMain && accDown} />
+          <Move label="Conversion" mm={v.account.conversion} fmt={(n) => n.toFixed(2) + "%"} />
+          <Move label="Avg price" mm={v.account.price} fmt={inr} goodUp={false} />
+        </div>
+      </div>
+
+      {/* 3. families */}
+      <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 10 }}>Where the {inr(Math.abs(v.account.m - v.account.baseline))} went</div>
+      <div className="dbd-card" style={{ padding: "6px 14px", marginBottom: 20 }}>
+        {v.families.map(f => {
+          const w = (Math.abs(f.change) / famMaxAbs) * 50, neg = f.change < 0;
+          return <div key={f.family} style={{ display: "grid", gridTemplateColumns: "1.2fr 1.4fr 2fr 1fr", gap: 8, alignItems: "center", padding: "7px 0", fontSize: 12, borderTop: "1px solid var(--bd)" }}>
+            <span style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis" }}>{f.family}</span>
+            <span style={{ color: "var(--muted)", fontSize: 11 }}>{inr(f.baseline)} → {inr(f.m)}</span>
+            <div style={{ position: "relative", height: 14 }}>
+              <div style={{ position: "absolute", left: "50%", top: 0, bottom: 0, width: 1, background: "var(--bd)" }} />
+              <div style={{ position: "absolute", top: 2, height: 10, borderRadius: 2, background: neg ? "#E58B45" : "#5B93C7", ...(neg ? { right: "50%", width: `${w}%` } : { left: "50%", width: `${w}%` }) }} />
+            </div>
+            <span style={{ textAlign: "right" }}>
+              <span style={{ color: neg ? "var(--worsefg)" : "var(--betterfg)", fontWeight: 600 }}>{inr(f.change)}</span>
+              {f.relativePts !== null && <div style={{ fontSize: 10, color: "var(--muted)" }}>{Math.abs(f.relativePts) < 10 ? "in line" : `${Math.round(Math.abs(f.relativePts))}pts ${f.relativePts < 0 ? "worse" : "better"}`}</div>}
+            </span>
           </div>;
         })}
       </div>
-      <div style={{ display: "flex", gap: 12, marginBottom: "1.5rem" }}>{d.months.map((m) => <span key={m} style={{ flex: 1, textAlign: "center", fontSize: 10, color: "var(--text-muted)" }}>{mLabel(m)}</span>)}</div>
 
-      {oneMonth && <div style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12, color: "var(--okay-fg)", background: "var(--okay-bg)", borderRadius: "var(--radius)", padding: "8px 12px", marginBottom: "1.5rem" }}>Only one month loaded — upload a few more months and the trend, the slip-detection and the drop diagnosis all turn on.</div>}
-
-      {d.attention.length > 0 && (
-        <div style={{ border: "0.5px solid var(--pause-cell)", borderRadius: 12, overflow: "hidden", marginBottom: "1.5rem" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", background: "var(--pause-bg)" }}>
-            <span style={{ fontSize: 13, fontWeight: 500, color: "var(--pause-fg)" }}>{d.attention.length} listing{d.attention.length > 1 ? "s" : ""} to watch</span>
-            <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>— slipping or declining · click any product below to see why</span>
+      {/* 4. signal cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 24 }}>
+        {v.signals.siblings.slice(0, 1).map((sb, i) => (
+          <div key={i} className="dbd-card" style={{ padding: "12px 14px" }}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Sibling shift · {sb.family}</div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}><span style={{ color: "var(--betterfg)" }}>{sb.up.name} {inr(sb.up.change)}</span> vs <span style={{ color: "var(--worsefg)" }}>{sb.down.name} {inr(sb.down.change)}</span> — demand moved between variants, not lost.</div>
           </div>
-          {d.attention.slice(0, 8).map((s) => (
-            <div key={s.asin} onClick={() => setOpen(open === s.asin ? null : s.asin)} style={{ display: "grid", gridTemplateColumns: "2.2fr 1fr 0.9fr 0.9fr", gap: 8, padding: "9px 14px", borderTop: "0.5px solid var(--border)", fontSize: 12, alignItems: "center", cursor: "pointer" }}>
-              <span style={{ color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{shortTitle(s.title, s.sku)}</span>
-              <span style={{ justifySelf: "center" }}><Spark s={s} /></span>
-              <span style={{ textAlign: "right", color: s.status === "declining" ? "var(--pause-fg)" : "var(--okay-fg)" }}>{s.momPct === null ? "—" : `▼ ${Math.abs(s.momPct).toFixed(0)}%`}</span>
-              <span style={{ textAlign: "right", color: "var(--text-secondary)" }}>{inr(s.latest)}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-        <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>All products</span>
-        <span style={{ fontSize: 11, color: "var(--text-muted)" }}>click a product for the why · {d.skus.length} SKUs</span>
+        ))}
+        {v.signals.stopped.count > 0 && (
+          <div className="dbd-card" style={{ padding: "12px 14px" }}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Stopped selling</div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>{v.signals.stopped.count} SKU{v.signals.stopped.count > 1 ? "s" : ""} went to zero. Largest: {v.signals.stopped.largest?.name} (was {inr(v.signals.stopped.largest?.baseline ?? 0)}).</div>
+          </div>
+        )}
+        {v.signals.priceMovedTop >= 4 && (
+          <div className="dbd-card" style={{ padding: "12px 14px" }}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Price moved</div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>Price changed ≥5% on {v.signals.priceMovedTop} of your top 12 SKUs this month.</div>
+          </div>
+        )}
+        {v.signals.checkData > 0 && (
+          <div className="dbd-card" style={{ padding: "12px 14px", borderColor: "#C9B8E0" }}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4, color: "#4B2F7A" }}>Check data</div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>{v.signals.checkData} SKU{v.signals.checkData > 1 ? "s" : ""} have sessions counted inconsistently across months — not diagnosed.</div>
+          </div>
+        )}
       </div>
-      <div style={{ border: "0.5px solid var(--border)", borderRadius: 12, overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "2.6fr 1.2fr 0.9fr 0.8fr 1fr", gap: 8, padding: "9px 14px", background: "var(--surface-1)", fontSize: 12, color: "var(--text-muted)" }}>
-          <span>Product</span><span style={{ textAlign: "center" }}>Trend</span><span style={{ textAlign: "right" }}>Revenue</span><span style={{ textAlign: "right" }}>MoM</span><span style={{ textAlign: "right" }}>Status</span>
+
+      {/* 5. movers */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 20, marginBottom: 24 }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: "var(--worsefg)" }}>Lost the most rupees</div>
+          {v.losers.map(s => <MoverRow key={s.asin} s={s} />)}
         </div>
-        {visible.map((s) => {
-          const b = BADGE[s.status];
-          const isOpen = open === s.asin;
-          const rowBg = isOpen ? "var(--surface-1)" : s.status === "declining" ? "var(--pause-bg)" : s.status === "slipping" ? "var(--okay-bg)" : "transparent";
-          return (
-            <div key={s.asin}>
-              <div onClick={() => setOpen(isOpen ? null : s.asin)} style={{ display: "grid", gridTemplateColumns: "2.6fr 1.2fr 0.9fr 0.8fr 1fr", gap: 8, padding: "11px 14px", borderTop: "0.5px solid var(--border)", fontSize: 13, alignItems: "center", background: rowBg, cursor: "pointer" }}>
-                <span style={{ overflow: "hidden" }}>
-                  <span style={{ color: "var(--text-primary)", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{shortTitle(s.title, s.sku)}</span>
-                  {s.sku && <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-muted)" }}>{s.sku}</span>}
-                </span>
-                <span style={{ justifySelf: "center" }}><Spark s={s} /></span>
-                <span style={{ textAlign: "right" }}>{inr(s.latest)}</span>
-                <span style={{ textAlign: "right", color: s.momPct === null ? "var(--text-muted)" : s.momPct >= 0 ? "var(--good-fg)" : s.momPct < -15 ? "var(--pause-fg)" : "var(--okay-fg)" }}>{s.momPct === null ? "—" : `${s.momPct >= 0 ? "▲" : "▼"} ${Math.abs(s.momPct).toFixed(0)}%`}</span>
-                <span style={{ textAlign: "right" }}><span style={{ fontSize: 11, color: b.fg, background: b.bg, borderRadius: "var(--radius)", padding: "2px 8px" }}>{b.label}</span></span>
-              </div>
-              {isOpen && <DiagnosisPanel s={s} />}
-            </div>
-          );
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: "var(--betterfg)" }}>Gained the most rupees</div>
+          {v.gainers.length ? v.gainers.map(s => <MoverRow key={s.asin} s={s} />) : <div style={{ fontSize: 12, color: "var(--muted)" }}>No gainers this month.</div>}
+        </div>
+      </div>
+
+      {/* 6. all SKUs grouped */}
+      <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>All products</div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+        {(["all", "worse", "inline", "beat", "stopped", "new"] as const).map(k => {
+          const n = k === "all" ? v.skus.length : v.counts[k as Status];
+          const active = filter === k;
+          return <button key={k} onClick={() => setFilter(k as Status | "all")} style={{ fontSize: 12, borderRadius: 14, padding: "5px 11px", cursor: "pointer", border: "1px solid var(--bd)", background: active ? "var(--ink)" : "var(--card)", color: active ? "#fff" : "var(--ink)" }}>{k === "all" ? "All" : STATUS_LABEL[k as Status]} {n}</button>;
         })}
       </div>
-      {d.skus.length > 20 && <button onClick={() => setShowAll((v) => !v)} style={{ marginTop: 12, fontSize: 13, background: "transparent", border: "0.5px solid var(--border-strong)", borderRadius: "var(--radius)", padding: "7px 14px", color: "var(--text-primary)", cursor: "pointer" }}>{showAll ? "Show top 20" : `Show all ${d.skus.length}`}</button>}
+      <div className="dbd-card" style={{ overflow: "hidden" }}>
+        {byFamily.map(([fam, list]) => {
+          const famChange = list.reduce((s, k) => s + k.change, 0), famM = list.reduce((s, k) => s + k.m, 0);
+          const open = openFam.has(fam);
+          return <div key={fam}>
+            <div onClick={() => setOpenFam(p => { const n = new Set(p); n.has(fam) ? n.delete(fam) : n.add(fam); return n; })} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 0.6fr", gap: 8, padding: "9px 12px", fontSize: 13, fontWeight: 600, alignItems: "center", borderTop: "1px solid var(--bd)", background: "var(--bg)", cursor: "pointer" }}>
+              <span>{open ? "▾" : "▸"} {fam} <span style={{ fontWeight: 400, color: "var(--muted)", fontSize: 11 }}>({list.length})</span></span>
+              <span style={{ textAlign: "right" }}>{inr(famM)}</span>
+              <span style={{ textAlign: "right", color: famChange < 0 ? "var(--worsefg)" : "var(--betterfg)" }}>{inr(famChange)}</span>
+              <span />
+            </div>
+            {open && list.map(s => (
+              <div key={s.asin}>
+                <div onClick={() => setOpenSku(openSku === s.asin ? null : s.asin)} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 0.9fr 1.1fr 1.3fr", gap: 6, padding: "8px 12px 8px 24px", fontSize: 12, alignItems: "center", borderTop: "1px solid var(--bd)", cursor: "pointer" }}>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</span>
+                  <span style={{ textAlign: "right" }}>{inr(s.m)}</span>
+                  <span style={{ textAlign: "right", color: "var(--muted)" }}>{inr(s.baseline)}</span>
+                  <span style={{ textAlign: "right", color: (s.pct ?? 0) < 0 ? "var(--worsefg)" : "var(--betterfg)" }}>{pctStr(s.pct)}</span>
+                  <span style={{ justifySelf: "end" }}><Spark series={s.revSeries} mi={mi} gain={s.change >= 0} /></span>
+                  <span style={s.tag ? tagStyle(s.tag) : { fontSize: 11, color: "var(--muted)" }}>{s.tag || STATUS_LABEL[s.status]}</span>
+                </div>
+                {openSku === s.asin && (
+                  <div style={{ padding: "8px 12px 12px 24px", background: "var(--bg)", borderTop: "1px solid var(--bd)", fontSize: 12 }}>
+                    <div style={{ display: "flex", gap: 18, flexWrap: "wrap", color: "var(--muted)" }}>
+                      <span>Sessions {Math.round(s.sess.m).toLocaleString("en-IN")} <b style={{ color: moveColor(s.sess.pct) }}>{pctStr(s.sess.pct)}</b> <span style={{ fontSize: 10 }}>(usual {Math.round(s.sess.base).toLocaleString("en-IN")})</span></span>
+                      <span>Conversion {s.conv.m.toFixed(2)}% <b style={{ color: moveColor(s.conv.pct) }}>{pctStr(s.conv.pct)}</b></span>
+                      <span>Price {inr(s.price.m)} <b style={{ color: moveColor(s.price.pct, false) }}>{pctStr(s.price.pct)}</b></span>
+                      {s.buybox.pp !== null && <span>Buy-box <b style={{ color: moveColor(s.buybox.pp) }}>{pctStr(s.buybox.pp, true)}</b></span>}
+                    </div>
+                    <div style={{ marginTop: 8, color: "var(--ink)" }}>{s.status === "worse" ? "Worse than the account. " : s.status === "beat" ? "Beat the account. " : ""}{s.tag ? `Driver: ${s.tag}.` : "No single driver stands out."}</div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>;
+        })}
+      </div>
     </div>
   );
 }
