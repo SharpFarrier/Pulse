@@ -2,11 +2,14 @@
 import { useState } from "react";
 import UploadClient, { type RecentUpload } from "./upload-client";
 import BusinessUploadClient from "./business-upload-client";
+import DailyAccountUploadClient from "./daily-account-upload-client";
 import CoveragePanel from "./coverage-panel";
 
+type Mode = "ads" | "account" | "business";
+
 export default function IngestTabs({ recent }: { recent: RecentUpload[] }) {
-  const [mode, setMode] = useState<"ads" | "business">("ads");
-  const tabs: [typeof mode, string][] = [["ads", "Advertising"], ["business", "Business report"]];
+  const [mode, setMode] = useState<Mode>("ads");
+  const tabs: [Mode, string][] = [["ads", "Advertising"], ["account", "Account (daily)"], ["business", "Business report"]];
   return (
     <div>
       <CoveragePanel />
@@ -15,7 +18,9 @@ export default function IngestTabs({ recent }: { recent: RecentUpload[] }) {
           <button key={k} onClick={() => setMode(k)} style={{ fontSize: 13, fontWeight: mode === k ? 500 : 400, color: mode === k ? "var(--surface-2)" : "var(--text-secondary)", background: mode === k ? "var(--text-primary)" : "transparent", border: "none", borderRadius: 8, padding: "6px 16px", cursor: "pointer" }}>{label}</button>
         ))}
       </div>
-      {mode === "ads" ? <UploadClient recent={recent} /> : <BusinessUploadClient recent={recent} />}
+      {mode === "ads" ? <UploadClient recent={recent} />
+        : mode === "account" ? <DailyAccountUploadClient recent={recent} />
+        : <BusinessUploadClient recent={recent} />}
     </div>
   );
 }

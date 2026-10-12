@@ -2,6 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { computeListingView, type BusinessMonthlyRow, type SkuView, type Status, type Mode, type MetricMove } from "@/lib/reports/listing";
+import AccountView from "./account-view";
+import type { AccountDailyRow } from "@/lib/reports/account";
 
 const inr = (n: number) => { const a = Math.abs(n); const s = n < 0 ? "−" : ""; return a >= 1e7 ? `${s}₹${(a / 1e7).toFixed(2)}Cr` : a >= 1e5 ? `${s}₹${(a / 1e5).toFixed(2)}L` : a >= 1e3 ? `${s}₹${(a / 1e3).toFixed(1)}k` : `${s}₹${Math.round(a)}`; };
 const mLabel = (m: string) => new Date(m + "-01T00:00:00Z").toLocaleDateString("en-IN", { month: "short", year: "2-digit", timeZone: "UTC" });
@@ -38,7 +40,7 @@ function tagStyle(tag: string): React.CSSProperties {
   return { fontSize: 11, background: bg, color: fg, borderRadius: 5, padding: "1px 7px", whiteSpace: "nowrap" };
 }
 
-export default function ListingClient({ rows }: { rows: BusinessMonthlyRow[] }) {
+function ProductsView({ rows }: { rows: BusinessMonthlyRow[] }) {
   const months = useMemo(() => [...new Set(rows.map(r => r.period.slice(0, 7)))].sort(), [rows]);
   const [month, setMonth] = useState<string | undefined>(undefined);
   const [mode, setMode] = useState<Mode>("3mo");
@@ -47,7 +49,7 @@ export default function ListingClient({ rows }: { rows: BusinessMonthlyRow[] }) 
   const [openSku, setOpenSku] = useState<string | null>(null);
   const v = useMemo(() => computeListingView(rows, month, mode), [rows, month, mode]);
 
-  if (!v) return <div className="dbd"><div style={{ fontSize: 20, fontWeight: 600 }}>Listing</div><div style={{ marginTop: 16, color: "var(--muted)" }}>No business data yet — ingest a Business report first.</div></div>;
+  if (!v) return <div style={{ marginTop: 16, color: "var(--muted)" }}>No business data yet — ingest a Business report first.</div>;
 
   const mi = v.months.indexOf(v.month);
   const accDown = v.account.pct < 0;
@@ -85,12 +87,12 @@ export default function ListingClient({ rows }: { rows: BusinessMonthlyRow[] }) 
   );
 
   return (
-    <div className="dbd">
+    <>
       {/* 1. header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10, marginBottom: 16 }}>
         <div>
-          <div style={{ fontSize: 20, fontWeight: 600 }}>Listing</div>
-          <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 2 }}>Business report · {mFull(v.month)} · {v.skuCount} SKUs</div>
+          <div style={{ fontSize: 16, fontWeight: 600 }}>{mFull(v.month)}</div>
+          <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 2 }}>Business report · per-SKU · {v.skuCount} SKUs</div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <select value={v.month} onChange={e => setMonth(e.target.value)} style={{ fontSize: 13, padding: "6px 10px", borderRadius: 7, border: "1px solid var(--bd)", background: "var(--card)", fontFamily: "inherit" }}>
@@ -230,6 +232,23 @@ export default function ListingClient({ rows }: { rows: BusinessMonthlyRow[] }) 
           </div>;
         })}
       </div>
+    </>
+  );
+}
+
+export default function ListingClient({ businessRows, accountRows }: { businessRows: BusinessMonthlyRow[]; accountRows: AccountDailyRow[] }) {
+  const [view, setView] = useState<"account" | "products">("account");
+  return (
+    <div className="dbd">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 16 }}>
+        <div style={{ fontSize: 20, fontWeight: 600 }}>Listing</div>
+        <div style={{ display: "inline-flex", gap: 3, background: "#ECE8DE", borderRadius: 9, padding: 3 }}>
+          {([["account", "Account"], ["products", "Products"]] as const).map(([k, lbl]) => (
+            <button key={k} onClick={() => setView(k)} style={{ fontSize: 13, border: "none", borderRadius: 7, padding: "6px 16px", cursor: "pointer", background: view === k ? "#fff" : "transparent", color: view === k ? "var(--ink)" : "var(--muted)", fontWeight: view === k ? 500 : 400 }}>{lbl}</button>
+          ))}
+        </div>
+      </div>
+      {view === "account" ? <AccountView rows={accountRows} /> : <ProductsView rows={businessRows} />}
     </div>
   );
 }

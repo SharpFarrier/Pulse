@@ -12,6 +12,7 @@ const STREAMS: StreamDef[] = [
   { group: "Sponsored Brands", key: "sb_campaign", label: "Campaign", kind: "daily" },
   { group: "Sponsored Brands", key: "sb_targeting", label: "Keyword", kind: "daily" },
   { group: "Sponsored Brands", key: "sb_search_term", label: "Search-term", kind: "daily" },
+  { group: "Listing", key: "daily_account", label: "Account (by date)", kind: "daily" },
   { group: "Listing", key: "business", label: "Business report", kind: "monthly" },
 ];
 
